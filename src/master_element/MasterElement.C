@@ -2734,17 +2734,25 @@ void Quad92DSCV::determinant(
 			     const double */*coords*/,
 			     double *volume,
 			     double *error)
-{
-  
+{  
   // hack... for uniform mesh
   const double deltaX = 0.1;
   const double deltaY = 0.1;
   const double elemVolume = deltaX*deltaY;
+  const double scvQuad = elemVolume/16.0;
+  // define a scaling factor for each ip in the scv quadrant
+  const double scaleFac[36] = {
+    0.25, 0.25, 0.50, 0.50, 0.25, 0.25,
+    0.25, 0.25, 0.50, 0.50, 0.25, 0.25,
+    0.50, 0.50, 1.00, 1.00, 0.50, 0.50,
+    0.50, 0.50, 1.00, 1.00, 0.50, 0.50,
+    0.25, 0.25, 0.50, 0.50, 0.25, 0.25,
+    0.25, 0.25, 0.50, 0.50, 0.25, 0.25 };
 
-  const double ipVolume = elemVolume/(double)numIntPoints_;
-  for ( int ip = 0; ip < numIntPoints_; ++ip )
-    volume[ip] = ipVolume;
-
+  // fill it in
+  for ( int ip =0; ip < numIntPoints_; ++ip )
+    volume[ip] = scvQuad*scaleFac[ip];
+ 
   *error = 0.0;
 }
 
