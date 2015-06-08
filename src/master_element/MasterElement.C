@@ -39,6 +39,18 @@ MasterElement::~MasterElement()
 }
 
 //--------------------------------------------------------------------------
+//-------- isoparametric_mapping -------------------------------------------
+//--------------------------------------------------------------------------
+double
+MasterElement::isoparametric_mapping( 
+  const double b,
+  const double a,
+  const double xi)
+{
+  return xi*(b-a)/2.0 +(a+b)/2.0;
+}
+
+//--------------------------------------------------------------------------
 //-------- constructor -----------------------------------------------------
 //--------------------------------------------------------------------------
 HexSCV::HexSCV()
@@ -2443,82 +2455,51 @@ Quad92DSCV::Quad92DSCV()
 {
   nDim_ = 2;
   nodesPerElement_ = 9;
-  numIntPoints_ = 16;
+  numIntPoints_ = 36;
 
-  // define ip node mappings; each sub-element is covered one at a time
-  ipNodeMap_.resize(16);
-  ipNodeMap_[0]  = 0; ipNodeMap_[1]  = 4; ipNodeMap_[2]  = 8; ipNodeMap_[3]  = 7;
-  ipNodeMap_[4]  = 4; ipNodeMap_[5]  = 1; ipNodeMap_[6]  = 5; ipNodeMap_[7]  = 8;
-  ipNodeMap_[8]  = 8; ipNodeMap_[9]  = 5; ipNodeMap_[10] = 2; ipNodeMap_[11] = 6;
-  ipNodeMap_[12] = 7; ipNodeMap_[13] = 8; ipNodeMap_[14] = 6; ipNodeMap_[15] = 3;
+  // define ip node mappings; for sake of sanity, align along Gauss-Legendre points
+  ipNodeMap_.resize(36);
+  ipNodeMap_[0]  = 0; ipNodeMap_[1]  = 0; ipNodeMap_[2]  = 4; ipNodeMap_[3]  = 4;
+  ipNodeMap_[4]  = 1; ipNodeMap_[5]  = 1; ipNodeMap_[6]  = 0; ipNodeMap_[7]  = 0;
+  ipNodeMap_[8]  = 4; ipNodeMap_[9]  = 4; ipNodeMap_[10] = 1; ipNodeMap_[11] = 1;
+  ipNodeMap_[12] = 7; ipNodeMap_[13] = 7; ipNodeMap_[14] = 8; ipNodeMap_[15] = 8;
+  ipNodeMap_[16] = 5; ipNodeMap_[17] = 5; ipNodeMap_[18] = 7; ipNodeMap_[19] = 7;
+  ipNodeMap_[20] = 8; ipNodeMap_[21] = 8; ipNodeMap_[22] = 5; ipNodeMap_[23] = 5;
+  ipNodeMap_[24] = 3; ipNodeMap_[25] = 3; ipNodeMap_[26] = 6; ipNodeMap_[27] = 6;
+  ipNodeMap_[28] = 2; ipNodeMap_[29] = 2; ipNodeMap_[30] = 3; ipNodeMap_[31] = 3;
+  ipNodeMap_[32] = 6; ipNodeMap_[33] = 6; ipNodeMap_[34] = 2; ipNodeMap_[35] = 2;
 
-  // standard integration location
-  intgLoc_.resize(32);
-  
-  const bool useMidPoint = false;
-  if ( useMidPoint ) {
-    intgLoc_[0]  = -0.75; intgLoc_[1]  = -0.75;
-    intgLoc_[2]  = -0.25; intgLoc_[3]  = -0.75;
-    intgLoc_[4]  = -0.25; intgLoc_[5]  = -0.25;
-    intgLoc_[6]  = -0.75; intgLoc_[7]  = -0.25;
-    intgLoc_[8]  =  0.25; intgLoc_[9]  = -0.75;
-    intgLoc_[10] =  0.75; intgLoc_[11] = -0.75;
-    intgLoc_[12] =  0.75; intgLoc_[13] = -0.25;
-    intgLoc_[14] =  0.25; intgLoc_[15] = -0.25;
-    intgLoc_[16] =  0.25; intgLoc_[17] =  0.25;
-    intgLoc_[18] =  0.75; intgLoc_[19] =  0.25;
-    intgLoc_[20] =  0.75; intgLoc_[21] =  0.75;
-    intgLoc_[22] =  0.25; intgLoc_[23] =  0.75;
-    intgLoc_[24] = -0.75; intgLoc_[25] =  0.25;
-    intgLoc_[26] = -0.25; intgLoc_[27] =  0.25;
-    intgLoc_[28] = -0.25; intgLoc_[29] =  0.75;
-    intgLoc_[30] = -0.75; intgLoc_[31] =  0.75;
-  }
-  else {
-    const double eps = 0.5 - (1.0/std::sqrt(3.0))/2.0;
-    intgLoc_[0]  = -0.75 + eps; intgLoc_[1]  = -0.75 + eps;
-    intgLoc_[2]  = -0.25 - eps; intgLoc_[3]  = -0.75 + eps;
-    intgLoc_[4]  = -0.25 - eps; intgLoc_[5]  = -0.25 - eps;
-    intgLoc_[6]  = -0.75 + eps; intgLoc_[7]  = -0.25 - eps;
-    intgLoc_[8]  =  0.25 + eps; intgLoc_[9]  = -0.75 + eps;
-    intgLoc_[10] =  0.75 - eps; intgLoc_[11] = -0.75 + eps;
-    intgLoc_[12] =  0.75 - eps; intgLoc_[13] =  0.75 - eps;
-    intgLoc_[14] =  0.25 + eps; intgLoc_[15] = -0.25 - eps;
-    intgLoc_[16] =  0.25 + eps; intgLoc_[17] =  0.25 + eps;
-    intgLoc_[18] =  0.75 - eps; intgLoc_[19] =  0.25 + eps;
-    intgLoc_[20] =  0.75 - eps; intgLoc_[21] =  0.75 - eps;
-    intgLoc_[22] =  0.25 + eps; intgLoc_[23] =  0.75 - eps;
-    intgLoc_[24] = -0.75 + eps; intgLoc_[25] =  0.25 + eps;
-    intgLoc_[26] = -0.25 - eps; intgLoc_[27] =  0.25 + eps;
-    intgLoc_[28] = -0.25 - eps; intgLoc_[29] =  0.75 - eps;
-    intgLoc_[30] = -0.75 + eps; intgLoc_[31] =  0.75 - eps;
-  }
+  // standard and shifted integration location; define standard from -1:1
+  const double sqrtThree = std::sqrt(3.0);
+  const double gp[2] = {-sqrt(3.0)/3.0, sqrt(3)/3.0};
+  const double gaussLegen[6] = {
+    isoparametric_mapping(-0.5, -1.0, gp[0]),
+    isoparametric_mapping(-0.5, -1.0, gp[1]),
+    isoparametric_mapping(+0.5, -0.5, gp[0]),
+    isoparametric_mapping(+0.5, -0.5, gp[1]),
+    isoparametric_mapping(+1.0, +0.5, gp[0]),
+    isoparametric_mapping(+1.0, +0.5, gp[1]) };
 
-  /*
-    std::cout << "SCV ips" << std::endl;
-    for ( int ip = 0; ip < numIntPoints_; ++ip ) {
-    std::cout << "ip: " << ip << " " << intgLoc_[ip*2] << " " << intgLoc_[ip*2+1] << std::endl;
+  const double gaussLabat[6] = {-1.00, -1.00, 0.00, 0.00, 1.00, 1.00};
+
+  // populate by starting at row 0 (ips 0, 1, 2, 3, 4, 5) and decrementing along t-direction
+  intgLoc_.resize(92);
+  intgLocShift_.resize(92);
+  const int numGL = 6;
+  const int numGLmo = 5;
+  for ( int row = 0; row < numGL; ++row ) {
+    double fixedGLg = gaussLegen[numGLmo-row];
+    double fixedGLb = gaussLabat[numGLmo-row];
+    const int offSet = row*numGL*nDim_;
+    for (int col = 0; col < numGL; ++col) {
+      // first standard
+      intgLoc_[offSet+col*nDim_+0] = gaussLegen[col];
+      intgLoc_[offSet+col*nDim_+1] = fixedGLg;
+      // now shifted
+      intgLocShift_[offSet+col*nDim_+0] = gaussLabat[col];
+      intgLocShift_[offSet+col*nDim_+1] = fixedGLb;
     }
-  */
-
-  // shifted
-  intgLocShift_.resize(32);
-  intgLocShift_[0]  = -1.00; intgLocShift_[1]  = -1.00;
-  intgLocShift_[2]  =  0.00; intgLocShift_[3]  = -1.00;
-  intgLocShift_[4]  =  0.00; intgLocShift_[5]  =  0.00;
-  intgLocShift_[6]  = -1.00; intgLocShift_[7]  =  0.00;
-  intgLocShift_[8]  =  0.00; intgLocShift_[9]  = -1.00;
-  intgLocShift_[10] =  1.00; intgLocShift_[11] = -1.00;
-  intgLocShift_[12] =  1.00; intgLocShift_[13] =  0.00;
-  intgLocShift_[14] =  0.00; intgLocShift_[15] =  0.00;
-  intgLocShift_[16] =  0.00; intgLocShift_[17] =  0.00;
-  intgLocShift_[18] =  1.00; intgLocShift_[19] =  0.00;
-  intgLocShift_[20] =  1.00; intgLocShift_[21] =  1.00;
-  intgLocShift_[22] =  0.00; intgLocShift_[23] =  1.00;
-  intgLocShift_[24] = -1.00; intgLocShift_[25] =  0.00;
-  intgLocShift_[26] =  0.00; intgLocShift_[27] =  0.00;
-  intgLocShift_[28] =  0.00; intgLocShift_[29] =  1.00;
-  intgLocShift_[30] = -1.00; intgLocShift_[31] =  1.00;
+  }
 
   /*
   std::cout << "shiftedSCV ips" << std::endl;
@@ -2529,8 +2510,8 @@ Quad92DSCV::Quad92DSCV()
   std::cout << "SCV ips" << std::endl;
   for ( int ip = 0; ip < numIntPoints_; ++ip ) {
     std::cout << "ip: " << ip << " " << intgLoc_[ip*2] << " " << intgLoc_[ip*2+1] << std::endl;
-  }
-  */
+  } */
+
 }
 
 //--------------------------------------------------------------------------
@@ -2579,7 +2560,7 @@ void Quad92DSCV::determinant(
 void
 Quad92DSCV::shape_fcn(double *shpfc)
 {
-  general_shape_fcn(numIntPoints_, &intgLoc_[0], shpfc);
+  quad9_shape_fcn(numIntPoints_, &intgLoc_[0], shpfc);
 }
 
 //--------------------------------------------------------------------------
@@ -2588,14 +2569,14 @@ Quad92DSCV::shape_fcn(double *shpfc)
 void
 Quad92DSCV::shifted_shape_fcn(double *shpfc)
 {
-  general_shape_fcn(numIntPoints_, &intgLocShift_[0], shpfc);
+  quad9_shape_fcn(numIntPoints_, &intgLocShift_[0], shpfc);
 }
 
 //--------------------------------------------------------------------------
-//-------- general_shape_fcn -----------------------------------------------
+//-------- quad9_shape_fcn -----------------------------------------------
 //--------------------------------------------------------------------------
 void
-Quad92DSCV::general_shape_fcn(
+Quad92DSCV::quad9_shape_fcn(
   const int  &numIntPoints,
   const double *intgLoc, 
   double *shpfc)
@@ -2676,12 +2657,13 @@ Quad92DSCS::Quad92DSCS()
   
   // define standard ips...
   const double sqrtThree = std::sqrt(3.0);
-  const double Loc0 = -(3.0*sqrtThree +1.0)/(4.0*sqrtThree);
-  const double Loc1 = -(3.0*sqrtThree -1.0)/(4.0*sqrtThree);
-  const double Loc2 = -1.0/(2.0*sqrtThree);
-  const double Loc3 = 1.0/(2.0*sqrtThree);
-  const double Loc4 = (3.0*sqrtThree -1.0)/(4.0*sqrtThree);
-  const double Loc5 = (3.0*sqrtThree +1.0)/(4.0*sqrtThree);
+  const double gp[2] = {-sqrt(3.0)/3.0, sqrt(3)/3.0};
+  const double Loc0 = isoparametric_mapping(-0.5, -1.0, gp[0]);
+  const double Loc1 = isoparametric_mapping(-0.5, -1.0, gp[1]);
+  const double Loc2 = isoparametric_mapping(+0.5, -0.5, gp[0]);
+  const double Loc3 = isoparametric_mapping(+0.5, -0.5, gp[1]);
+  const double Loc4 = isoparametric_mapping(+1.0, +0.5, gp[0]);
+  const double Loc5 = isoparametric_mapping(+1.0, +0.5, gp[1]);
   const double faceLocal = 1.0/2.0;
 
   // elem 1
@@ -2822,7 +2804,7 @@ Quad92DSCS::opposingFace(
 void
 Quad92DSCS::shape_fcn(double *shpfc)
 {
-  general_shape_fcn(numIntPoints_, &intgLoc_[0], shpfc);
+  quad9_shape_fcn(numIntPoints_, &intgLoc_[0], shpfc);
 }
 
 //--------------------------------------------------------------------------
@@ -2832,14 +2814,14 @@ void
 Quad92DSCS::shifted_shape_fcn(double *shpfc)
 {
   std::cout << "Qaud92DSCS::shifted_shape_fcn not implemented with intLocShift_" << std::endl;
-  general_shape_fcn(numIntPoints_, &intgLoc_[0], shpfc);
+  quad9_shape_fcn(numIntPoints_, &intgLoc_[0], shpfc);
 }
 
 //--------------------------------------------------------------------------
-//-------- general_shape_fcn -----------------------------------------------
+//-------- quad9_shape_fcn -----------------------------------------------
 //--------------------------------------------------------------------------
 void
-Quad92DSCS::general_shape_fcn(
+Quad92DSCS::quad9_shape_fcn(
   const int  &numIntPoints,
   const double *intgLoc, 
   double *shpfc)
@@ -3988,12 +3970,13 @@ Edge32DSCS::Edge32DSCS()
 
   intgLoc_.resize(6);
   const double sqrtThree = std::sqrt(3.0);
-  intgLoc_[0]  = -(3.0*sqrtThree +1.0)/(4.0*sqrtThree); intgLoc_[1]  = -(3.0*sqrtThree -1.0)/(4.0*sqrtThree); 
-  intgLoc_[2]  = -1.0/(2.0*sqrtThree);                  intgLoc_[3]  =  1.0/(2.0*sqrtThree); 
-  intgLoc_[4]  =  (3.0*sqrtThree -1.0)/(4.0*sqrtThree); intgLoc_[5]  =  (3.0*sqrtThree +1.0)/(4.0*sqrtThree);
-
-  for ( int ip = 0; ip < numIntPoints_; ++ip ) 
-    std::cout << "Edge32dSCS Ip: " << ip << " " << intgLoc_[ip] << std::endl;
+  const double gp[2] = {-sqrt(3.0)/3.0, sqrt(3)/3.0};
+  intgLoc_[0] = isoparametric_mapping(-0.5, -1.0, gp[0]);
+  intgLoc_[1] = isoparametric_mapping(-0.5, -1.0, gp[1]);
+  intgLoc_[2] = isoparametric_mapping(+0.5, -0.5, gp[0]);
+  intgLoc_[3] = isoparametric_mapping(+0.5, -0.5, gp[1]);
+  intgLoc_[4] = isoparametric_mapping(+1.0, +0.5, gp[0]);
+  intgLoc_[5] = isoparametric_mapping(+1.0, +0.5, gp[1]);
   
   intgLocShift_.resize(6);
   intgLocShift_[0] = -1.00; intgLocShift_[1]  = -1.00; 

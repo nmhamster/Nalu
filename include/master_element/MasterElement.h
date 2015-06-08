@@ -127,6 +127,8 @@ public:
   virtual const double * edgeAlignedArea() {
     throw std::runtime_error("edgeAlignedArea not implement"); }
 
+  double isoparametric_mapping(const double b, const double a, const double xi);
+
   int nDim_;
   int nodesPerElement_;
   int numIntPoints_;
@@ -590,7 +592,7 @@ public:
   void shifted_shape_fcn(
     double *shpfc);
 
-  void general_shape_fcn(
+  void quad9_shape_fcn(
     const int &npts,
     const double *par_coord, 
     double* shape_fcn);
@@ -640,7 +642,7 @@ public:
   void shifted_shape_fcn(
     double *shpfc);
 
-  void general_shape_fcn(
+  void quad9_shape_fcn(
     const int &npts,
     const double *par_coord, 
     double* shape_fcn);
