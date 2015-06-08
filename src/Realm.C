@@ -74,6 +74,7 @@
 // stk_util
 #include <stk_util/parallel/Parallel.hpp>
 #include <stk_util/environment/CPUTime.hpp>
+#include <stk_util/environment/perf_util.hpp>
 
 // stk_mesh/base/fem
 #include <stk_mesh/base/BulkData.hpp>
@@ -104,9 +105,8 @@
 #include <boost/lexical_cast.hpp>
 
 // basic c++
-#include <iostream>
 #include <map>
-#include <math.h>
+#include <cmath>
 #include <utility>
 #include <stdint.h>
 
@@ -135,9 +135,9 @@ Realm::Realm(Realms& realms)
     isTurbulent_(false),
     needsEnthalpy_(false),
     l2Scaling_(1.0),
-    ioBroker_(NULL),
     metaData_(NULL),
     bulkData_(NULL),
+    ioBroker_(NULL),
     resultsFileIndex_(99),
     restartFileIndex_(99),
     computeGeometryAlgDriver_(0),
@@ -189,7 +189,8 @@ Realm::Realm(Realms& realms)
     provideEntityCount_(false),
     HDF5ptr_(NULL),
     autoDecompType_("None"),
-    activateAura_(false)
+    activateAura_(false),
+    activateMemoryDiagnostic_(false)
 {
   // nothing to do
 }
@@ -282,6 +283,78 @@ bool
 Realm::debug() const
 {
   return root()->debug_;
+}
+
+//--------------------------------------------------------------------------
+//-------- get_activate_memory_diagnostic ----------------------------------
+//--------------------------------------------------------------------------
+bool
+Realm::get_activate_memory_diagnostic()
+{
+  return activateMemoryDiagnostic_;
+}
+
+//--------------------------------------------------------------------------
+//-------- provide_memory_summary ------------------------------------------
+//--------------------------------------------------------------------------
+void
+Realm::provide_memory_summary() 
+{
+  size_t now, hwm;
+  stk::get_memory_usage(now, hwm);
+  // min, max, sum
+  size_t global_now[3] = {now,now,now};
+  size_t global_hwm[3] = {hwm,hwm,hwm};
+  
+  stk::all_reduce(NaluEnv::self().parallel_comm(), stk::ReduceSum<1>( &global_now[2] ) );
+  stk::all_reduce(NaluEnv::self().parallel_comm(), stk::ReduceMin<1>( &global_now[0] ) );
+  stk::all_reduce(NaluEnv::self().parallel_comm(), stk::ReduceMax<1>( &global_now[1] ) );
+  
+  stk::all_reduce(NaluEnv::self().parallel_comm(), stk::ReduceSum<1>( &global_hwm[2] ) );
+  stk::all_reduce(NaluEnv::self().parallel_comm(), stk::ReduceMin<1>( &global_hwm[0] ) );
+  stk::all_reduce(NaluEnv::self().parallel_comm(), stk::ReduceMax<1>( &global_hwm[1] ) );
+  
+  NaluEnv::self().naluOutputP0() << "Memory Overview: " << std::endl;
+  NaluEnv::self().naluOutputP0() << "nalu memory: total (over all cores) current/high-water mark= "
+                                 << std::setw(15) << convert_bytes(global_now[2])
+                                 << std::setw(15) << convert_bytes(global_hwm[2])
+                                 << std::endl;
+  
+  NaluEnv::self().naluOutputP0() << "nalu memory:   min (over all cores) current/high-water mark= "
+                                 << std::setw(15) << convert_bytes(global_now[0])
+                                 << std::setw(15) << convert_bytes(global_hwm[0])
+                                 << std::endl;
+  
+  NaluEnv::self().naluOutputP0() << "nalu memory:   max (over all cores) current/high-water mark= "
+                                  << std::setw(15) << convert_bytes(global_now[1])
+                                  << std::setw(15) << convert_bytes(global_hwm[1])
+                                  << std::endl;
+}
+
+//--------------------------------------------------------------------------
+//-------- convert_bytes ---------------------------------------------------
+//--------------------------------------------------------------------------
+std::string 
+Realm::convert_bytes(double bytes)
+{
+  const double K = 1024;
+  const double M = K*1024;
+  const double G = M*1024;
+
+  std::ostringstream out;
+  if (bytes < K) {
+    out << bytes << " B";
+  } else if (bytes < M) {
+    bytes /= K;
+    out << bytes << " K";
+  } else if (bytes < G) {
+    bytes /= M;
+    out << bytes << " M";
+  } else {
+    bytes /= G;
+    out << bytes << " G";
+  }
+  return out.str();
 }
 
 //--------------------------------------------------------------------------
@@ -400,7 +473,7 @@ Realm::sample_look_ahead()
         // do something...
         std::string out;
         *val >> out;
-        std::cout << "found special_condition_XXX = " << out << std::endl;
+        NaluEnv::self().naluOutputP0() << "found special_condition_XXX = " << out << std::endl;
       }
     }
   }
@@ -457,6 +530,11 @@ Realm::load(const YAML::Node & node)
     NaluEnv::self().naluOutputP0() << "Nalu will activate aura ghosting" << std::endl;
   else
     NaluEnv::self().naluOutputP0() << "Nalu will deactivate aura ghosting" << std::endl;
+
+  // memory diagnostic
+  get_if_present(node, "activate_memory_diagnostic", activateMemoryDiagnostic_, activateMemoryDiagnostic_);
+  if ( activateMemoryDiagnostic_ )
+    NaluEnv::self().naluOutputP0() << "Nalu will activate detailed memory pulse" << std::endl;
 
   // time step control
   const bool dtOptional = true;
@@ -769,11 +847,6 @@ Realm::setup_initial_conditions()
             stk::mesh::FieldBase *field = stk::mesh::get_field_by_name(genIC.fieldNames_[ifield], *metaData_);
             ThrowAssert(field);
       
-            if (debug()) {
-              NaluEnv::self().naluOutputP0() << "EquationSystem::register_initial_condition: field= " << field
-                        << " for name= " << genIC.fieldNames_[ifield] << std::endl;
-            }
-
             stk::mesh::FieldBase *fieldWithState = ( field->number_of_states() > 1 )
               ? field->field_state(stk::mesh::StateNP1)
               : field->field_state(stk::mesh::StateNone);
@@ -1536,12 +1609,15 @@ Realm::advance_time_step()
                   << std::setw(16) << std::right << "-----------"
                   << std::setw(14) << std::right << "----------" << std::endl;
 
-  // evaluate new geometry based on lastest mesh motion geometry state (provided that external is active)
+  // evaluate new geometry based on latest mesh motion geometry state (provided that external is active)
   if ( solutionOptions_->externalMeshDeformation_ )
     compute_geometry();
 
   // evaluate properties based on latest state including boundary and and possible xfer
   evaluate_properties();
+
+  // compute velocity relative to mesh
+  compute_vrtm();
 
   const int numNonLinearIterations = equationSystems_.maxIterations_;
   for ( int i = 0; i < numNonLinearIterations; ++i ) {
@@ -2017,6 +2093,15 @@ Realm::has_mesh_deformation()
 }
 
 //--------------------------------------------------------------------------
+//-------- does_mesh_move --------------------------------------------------
+//--------------------------------------------------------------------------
+bool
+Realm::does_mesh_move()
+{
+  return has_mesh_motion() | has_mesh_deformation();
+}
+
+//--------------------------------------------------------------------------
 //-------- has_non_matching_boundary_face_alg ------------------------------
 //--------------------------------------------------------------------------
 bool
@@ -2203,8 +2288,7 @@ Realm::compute_geometry()
   computeGeometryAlgDriver_->execute();
 
   // find total volume if the mesh moves at all
-  if ( has_mesh_motion() || has_mesh_deformation() ) {
-
+  if ( does_mesh_move() ) {
     double totalVolume = 0.0;
     double maxVolume = -1.0e16;
     double minVolume = 1.0e16;
@@ -2237,6 +2321,42 @@ Realm::compute_geometry()
     NaluEnv::self().naluOutputP0() << " Volume  " << g_totalVolume
 		    << " min: " << g_minVolume
 		    << " max: " << g_maxVolume << std::endl;
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- compute_vrtm ----------------------------------------------------
+//--------------------------------------------------------------------------
+void
+Realm::compute_vrtm()
+{
+  // compute velocity relative to mesh; must be tied to velocity update...
+  if ( solutionOptions_->meshMotion_ || solutionOptions_->externalMeshDeformation_ ) {
+    const int nDim = metaData_->spatial_dimension();
+
+    VectorFieldType *velocity = metaData_->get_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity");
+    VectorFieldType *meshVelocity = metaData_->get_field<VectorFieldType>(stk::topology::NODE_RANK, "mesh_velocity");
+    VectorFieldType *velocityRTM = metaData_->get_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity_rtm");
+
+    stk::mesh::Selector s_all_nodes
+       = (metaData_->locally_owned_part() | metaData_->globally_shared_part());
+
+    stk::mesh::BucketVector const& node_buckets = bulkData_->get_buckets( stk::topology::NODE_RANK, s_all_nodes );
+    for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
+	  ib != node_buckets.end() ; ++ib ) {
+      stk::mesh::Bucket & b = **ib ;
+      const stk::mesh::Bucket::size_type length   = b.size();
+      const double * uNp1 = stk::mesh::field_data(*velocity, b);
+      const double * vNp1 = stk::mesh::field_data(*meshVelocity, b);
+      double * vrtm = stk::mesh::field_data(*velocityRTM, b);
+
+      for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
+        const int offSet = k*nDim;
+        for ( int j=0; j < nDim; ++j ) {
+          vrtm[offSet+j] = uNp1[offSet+j] - vNp1[offSet+j];
+        }
+      }
+    }
   }
 }
 
@@ -2325,13 +2445,15 @@ Realm::register_nodal_fields(
   const int nDim = metaData_->spatial_dimension();
 
   // mesh motion/deformation is high level
-  if ( solutionOptions_->meshMotion_ || solutionOptions_->externalMeshDeformation_ ) {
+  if ( solutionOptions_->meshMotion_ || solutionOptions_->externalMeshDeformation_) {
     VectorFieldType *displacement = &(metaData_->declare_field<VectorFieldType>(stk::topology::NODE_RANK, "mesh_displacement"));
     stk::mesh::put_field(*displacement, *part, nDim);
     VectorFieldType *currentCoords = &(metaData_->declare_field<VectorFieldType>(stk::topology::NODE_RANK, "current_coordinates"));
     stk::mesh::put_field(*currentCoords, *part, nDim);
     VectorFieldType *meshVelocity = &(metaData_->declare_field<VectorFieldType>(stk::topology::NODE_RANK, "mesh_velocity"));
     stk::mesh::put_field(*meshVelocity, *part, nDim);
+    VectorFieldType *velocityRTM = &(metaData_->declare_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity_rtm"));
+    stk::mesh::put_field(*velocityRTM, *part, nDim);
     // only internal mesh motion requires rotation rate
     if ( solutionOptions_->meshMotion_ ) {
       ScalarFieldType *omega = &(metaData_->declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "omega"));
@@ -2793,8 +2915,6 @@ Realm::setup_non_conformal_bc(
 {
 
   hasNonConformal_ = true;
-
-  const int nDim = metaData_->spatial_dimension();
   
   // extract data
   NonConformalUserData userData = nonConformalBCData.userData_;
@@ -2803,10 +2923,14 @@ Realm::setup_non_conformal_bc(
   const std::string searchMethodName = userData.searchMethodName_;
   const double expandBoxPercentage = userData.expandBoxPercentage_/100.0;
   const bool clipIsoParametricCoords = userData.clipIsoParametricCoords_; 
- 
+  const double searchTolerance = userData.searchTolerance_;
+
+  // deal with output
+  const bool ncAlgDetailedOutput = solutionOptions_->ncAlgDetailedOutput_;
+
   // create manager
   if ( NULL == nonConformalManager_ ) {
-    nonConformalManager_ = new NonConformalManager(*this);
+    nonConformalManager_ = new NonConformalManager(*this, ncAlgDetailedOutput);
   }
    
   // create contact info for this surface
@@ -2816,7 +2940,8 @@ Realm::setup_non_conformal_bc(
                            opposingPart,
                            expandBoxPercentage,
                            searchMethodName,
-                           clipIsoParametricCoords);
+                           clipIsoParametricCoords,
+                           searchTolerance);
   
   nonConformalManager_->nonConformalInfoVec_.push_back(nonConformalInfo);
 
@@ -3672,6 +3797,15 @@ Realm::get_cvfem_shifted_poisson()
 }
 
 //--------------------------------------------------------------------------
+//-------- get_cvfem_reduced_sens_poisson ---------------------------------------
+//--------------------------------------------------------------------------
+bool
+Realm::get_cvfem_reduced_sens_poisson()
+{
+  return solutionOptions_->cvfemReducedSensPoisson_;
+}
+
+//--------------------------------------------------------------------------
 //-------- has_nc_gauss_labatto_quadrature ---------------------------------
 //--------------------------------------------------------------------------
 bool
@@ -3679,6 +3813,7 @@ Realm::has_nc_gauss_labatto_quadrature()
 {
   return solutionOptions_->ncAlgGaussLabatto_;
 }
+
 //--------------------------------------------------------------------------
 //-------- get_nc_alg_type -------------------------------------------------
 //--------------------------------------------------------------------------
@@ -3686,6 +3821,15 @@ NonConformalAlgType
 Realm::get_nc_alg_type()
 {
   return solutionOptions_->ncAlgType_;
+}
+
+//--------------------------------------------------------------------------
+//-------- get_nc_alg_upwind_advection -------------------------------------
+//--------------------------------------------------------------------------
+bool
+Realm::get_nc_alg_upwind_advection()
+{
+  return solutionOptions_->ncAlgUpwindAdvection_;
 }
 
 //--------------------------------------------------------------------------

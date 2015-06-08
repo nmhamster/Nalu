@@ -32,25 +32,23 @@ public:
     stk::mesh::Part *part,
     EquationSystem *eqSystem,
     ScalarFieldType *scalarQ,
-    ScalarFieldType *ncNormalFlux,
-    ScalarFieldType *ncPenalty,
-    const bool normalizeByTimeScale = false);
+    ScalarFieldType *diffFluxCoeff);
   virtual ~AssembleScalarNonConformalSolverAlgorithm() {}
   virtual void initialize_connectivity();
   virtual void execute();
 
   ScalarFieldType *scalarQ_;
-  ScalarFieldType *ncNormalFlux_;
-  ScalarFieldType *ncPenalty_;
-  const bool normalizeByTimeScale_;
+  ScalarFieldType *diffFluxCoeff_;
+  VectorFieldType *coordinates_;
   GenericFieldType *exposedAreaVec_;
+  GenericFieldType *ncMassFlowRate_;
 
   // options that prevail over all algorithms created
   bool robinStyle_;
   double dsFactor_;
+  const bool upwindAdvection_;
 
   std::vector< const stk::mesh::FieldBase *> ghostFieldVec_;
-
 };
 
 } // namespace nalu

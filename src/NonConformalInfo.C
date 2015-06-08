@@ -30,6 +30,9 @@
 #include <stk_search/CoarseSearch.hpp>
 #include <stk_search/IdentProc.hpp>
 
+// stk_topo
+#include <stk_topology/topology.hpp>
+
 // vector, pair and find
 #include <vector>
 #include <utility>
@@ -74,7 +77,8 @@ NonConformalInfo::NonConformalInfo(
    const stk::mesh::Part *opposingPart,
    const double expandBoxPercentage,
    const std::string &searchMethodName,
-   const bool clipIsoParametricCoords)
+   const bool clipIsoParametricCoords,
+   const double searchTolerance)
   : realm_(realm ),
     name_(currentPart->name()),
     currentPart_(currentPart),
@@ -82,6 +86,7 @@ NonConformalInfo::NonConformalInfo(
     expandBoxPercentage_(expandBoxPercentage),
     searchMethod_(stk::search::BOOST_RTREE),
     clipIsoParametricCoords_(clipIsoParametricCoords),
+    searchTolerance_(searchTolerance),
     meshMotion_(realm_.has_mesh_motion()),
     meSCS_(NULL)
 {
@@ -185,10 +190,10 @@ NonConformalInfo::construct_dgInfo_state()
     // extract connected element topology
     b.parent_topology(stk::topology::ELEMENT_RANK, parentTopo);
     ThrowAssert ( parentTopo.size() == 1 );
-    stk::topology theElemTopo = parentTopo[0];
+    stk::topology currentElemTopo = parentTopo[0];
 
     // volume and surface master element
-    MasterElement *meSCS = realm_.get_surface_master_element(theElemTopo);
+    MasterElement *meSCS = realm_.get_surface_master_element(currentElemTopo);
     MasterElement *meFC = realm_.get_surface_master_element(b.topology());
 
     // master element-specific values
@@ -246,7 +251,7 @@ NonConformalInfo::construct_dgInfo_state()
         for ( int j = 0; j < nDim; ++j )
           currentGaussPointCoords[j] = 0.0;
         
-        // interpolate to guass point
+        // interpolate to gauss point
         for ( int ic = 0; ic < nodesPerFace; ++ic ) {
           const double r = p_face_shape_function[ip*nodesPerFace+ic];
           for ( int j = 0; j < nDim; ++j ) {
@@ -256,7 +261,7 @@ NonConformalInfo::construct_dgInfo_state()
      
         // create data structure to hold this information; add currentIpNumber for later fast look-up
         DgInfo *dgInfo = new DgInfo(NaluEnv::self().parallel_rank(), globalFaceId, localGaussPointId, ip, 
-                                    face, element, currentFaceOrdinal, meFC, meSCS, nDim);
+                                    face, element, currentFaceOrdinal, meFC, meSCS, currentElemTopo, nDim);
 
         // extract isoparametric coords on current face from meFC
         const double *intgLoc = useShifted ? &meFC->intgLocShift_[0] : &meFC->intgLoc_[0];
@@ -266,9 +271,10 @@ NonConformalInfo::construct_dgInfo_state()
           dgInfo->currentGaussPointCoords_[j] = currentGaussPointCoords[j];
         }
 
-        // save face iso-parametric coordinates (factor of conversion from -0.5:0.5 to -1:1)
+        // save face iso-parametric coordinates; extract conversion factor from CVFEM to isInElement
+        const double conversionFac = meFC->scaleToStandardIsoFac_;
         for ( int j = 0; j < nDim-1; ++j ) {
-          dgInfo->currentIsoParCoords_[j] = 2.0*intgLoc[ip*(nDim-1)+j]; // FIXME: make sure that **all** CVFEM is -0.5:0.5
+          dgInfo->currentIsoParCoords_[j] = conversionFac*intgLoc[ip*(nDim-1)+j]; 
         }
 
         // push back to local
@@ -280,13 +286,12 @@ NonConformalInfo::construct_dgInfo_state()
         // create the bounding point and push back
         boundingPoint thePt(currentGaussPointCoords, theIdent);
         boundingPointVec_.push_back(thePt);
-        
       }
       
       // push them all back
       dgInfoVec_.push_back(faceDgInfoVec);
-
-      }
+      
+    }
   }
 }
 
@@ -353,7 +358,7 @@ NonConformalInfo::complete_search()
   VectorFieldType *coordinates = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, realm_.get_coordinates_name());
 
   std::vector<double> currentGaussPointCoords(nDim);
-  std::vector<double> opposingIsoParCoords(nDim-1);
+  std::vector<double> opposingIsoParCoords(nDim);
 
   // invert the process... Loop over dgInfoVec_ and query searchKeyPair_ for this information
   std::vector<DgInfo *> problemDgInfoVec;
@@ -374,7 +379,6 @@ NonConformalInfo::complete_search()
       else {
         for (std::vector<std::pair<theKey, theKey> >::const_iterator ii = p2.first; ii != p2.second; ++ii ) {
           
-          const uint64_t thePt = ii->first.id();
           const uint64_t theBox = ii->second.id();
           const unsigned theRank = NaluEnv::self().parallel_rank();
           const unsigned pt_proc = ii->first.proc();
@@ -462,6 +466,7 @@ NonConformalInfo::complete_search()
               const stk::topology theOpposingElementTopo = bulk_data.bucket(opposingElement).topology();
               MasterElement *meSCS = realm_.get_surface_master_element(theOpposingElementTopo);
               dgInfo->meSCSOpposing_ = meSCS;
+              dgInfo->opposingElementTopo_ = theOpposingElementTopo;
               dgInfo->opposingIsoParCoords_ = opposingIsoParCoords;
               dgInfo->bestX_ = nearestDistance;
               dgInfo->opposingFaceIsGhosted_ = opposingFaceIsGhosted;
@@ -476,9 +481,19 @@ NonConformalInfo::complete_search()
   }
   
   // check for problems... will want to be more pro-active in the near future, e.g., expand and search...
-  if ( problemDgInfoVec.size() > 0 )
-    throw std::runtime_error("sorry, issues with finding a home for all Gauss points?");
-
+  if ( problemDgInfoVec.size() > 0 ) {
+    NaluEnv::self().naluOutputP0() << "NonConformalInfo::complete_search issue with " << currentPart_->name() << " " << opposingPart_->name() << " Size of issue is " << problemDgInfoVec.size() << std::endl; 
+    NaluEnv::self().naluOutputP0() << "Problem ips are as follows: " << std::endl; 
+    for ( size_t k = 0; k < problemDgInfoVec.size(); ++k ) {
+      const uint64_t localGaussPointId  = problemDgInfoVec[k]->localGaussPointId_; 
+      NaluEnv::self().naluOutputP0() << "local gauss point id with gass point coords " << localGaussPointId << " ";
+      for ( int i = 0; i < nDim; ++i ) 
+        NaluEnv::self().naluOutputP0() << " " << problemDgInfoVec[k]->currentGaussPointCoords_[i];
+      NaluEnv::self().naluOutputP0() << std::endl;
+    }
+    NaluEnv::self().naluOutputP0() << std::endl;
+    throw std::runtime_error("Try to adjust the search tolerance and re-submit...");
+  }
 }
 
 //--------------------------------------------------------------------------
@@ -545,12 +560,12 @@ NonConformalInfo::find_possible_face_elements()
 
       searchFaceElementMap_[bulk_data.identifier(face)] = face;
 
-      // expand the box
+      // expand the box by both % and search tolerance
       for ( int i = 0; i < nDim; ++i ) {
         const double theMin = minCorner[i];
         const double theMax = maxCorner[i];
-        const double increment = expandBoxPercentage_*(theMax - theMin);
-        minCorner[i]   -= increment;
+        const double increment = expandBoxPercentage_*(theMax - theMin) + searchTolerance_;
+        minCorner[i] -= increment;
         maxCorner[i] += increment;
       }
 
@@ -577,8 +592,8 @@ NonConformalInfo::provide_diagnosis()
   std::vector<double> currentGaussPointCoords(nDim);
   std::vector<double> opposingGaussPointCoords(nDim);
  
-  std::vector<double> currentIsoParCoords(nDim-1);
-  std::vector<double> opposingIsoParCoords(nDim-1);
+  std::vector<double> currentIsoParCoords(nDim);
+  std::vector<double> opposingIsoParCoords(nDim);
 
   NaluEnv::self().naluOutput() << std::endl;
   NaluEnv::self().naluOutput() << "Non Conformal Alg review for surface: " << name_ << std::endl;
@@ -650,13 +665,13 @@ NonConformalInfo::provide_diagnosis()
         stk::mesh::Entity node = opposing_face_node_rels[ni];
         const double * coords = stk::mesh::field_data(*coordinates, node);
         for ( int j=0; j < nDim; ++j ) {
-          opposingFaceNodalCoords[j*currentNodesPerFace+ni] = coords[j];
+          opposingFaceNodalCoords[j*opposingNodesPerFace+ni] = coords[j];
         }
       }
       
       // interpolate to opposing GP
       std::vector<double> checkOpposingFaceGaussPointCoords(nDim);
-      meFCCurrent->interpolatePoint(
+      meFCOpposing->interpolatePoint(
         nDim,
         &opposingIsoParCoords[0],
         &opposingFaceNodalCoords[0],
@@ -664,7 +679,6 @@ NonConformalInfo::provide_diagnosis()
 
       // global id for opposing element
       const uint64_t opElemId = bulk_data.identifier(dgInfo->opposingElement_);
-      
 
       // compute a norm between the curent nd opposing coordinate checks
       double distanceNorm = 0.0;

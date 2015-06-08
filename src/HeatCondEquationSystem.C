@@ -8,12 +8,13 @@
 
 #include <HeatCondEquationSystem.h>
 
+#include <AssembleElemSolverAlgorithm.h>
 #include <AssembleHeatCondWallSolverAlgorithm.h>
 #include <AssembleHeatCondIrradWallSolverAlgorithm.h>
 #include <AssembleScalarEdgeDiffSolverAlgorithm.h>
 #include <AssembleScalarElemDiffSolverAlgorithm.h>
 #include <AssembleScalarEdgeDiffContactSolverAlgorithm.h>
-#include <AssembleScalarNonConformalSolverAlgorithm.h>
+#include <AssembleScalarDiffNonConformalSolverAlgorithm.h>
 #include <AssembleScalarFluxBCSolverAlgorithm.h>
 #include <AssembleNodalGradAlgorithmDriver.h>
 #include <AssembleNodalGradEdgeAlgorithm.h>
@@ -22,9 +23,6 @@
 #include <AssembleNodalGradEdgeContactAlgorithm.h>
 #include <AssembleNodalGradElemContactAlgorithm.h>
 #include <AssembleNodeSolverAlgorithm.h>
-#include <AssembleNonConformalAlgorithmDriver.h>
-#include <AssembleNonConformalEdgeDiffPenaltyAlgorithm.h>
-#include <AssembleNonConformalElemDiffPenaltyAlgorithm.h>
 #include <AuxFunctionAlgorithm.h>
 #include <ConstantAuxFunction.h>
 #include <CopyFieldAlgorithm.h>
@@ -55,6 +53,7 @@
 // user functions
 #include <user_functions/SteadyThermalContactAuxFunction.h>
 #include <user_functions/SteadyThermalContactSrcNodeSuppAlg.h>
+#include <user_functions/SteadyThermalContactSrcElemSuppAlg.h>
 
 // stk_util
 #include <stk_util/parallel/Parallel.hpp>
@@ -78,10 +77,6 @@
 // stk_util
 #include <stk_util/parallel/ParallelReduce.hpp>
 #include <stk_util/environment/CPUTime.hpp>
-
-// basic c++
-#include <iostream>
-#include <math.h>
 
 namespace sierra{
 namespace nalu{
@@ -338,6 +333,38 @@ HeatCondEquationSystem::register_interior_algorithm(
   }
   else {
     itsm->second->partVec_.push_back(part);
+  }
+
+  // allow for fully integrated source terms
+  const AlgorithmType algElemSource = ELEM_SOURCE;
+  std::map<AlgorithmType, SolverAlgorithm *>::iterator itsrc
+    = solverAlgDriver_->solverAlgMap_.find(algElemSource);
+  if ( itsrc == solverAlgDriver_->solverAlgMap_.end() ) {
+    // create the solver alg
+    AssembleElemSolverAlgorithm *theAlg
+      = new AssembleElemSolverAlgorithm(realm_, part, this);
+    solverAlgDriver_->solverAlgMap_[algElemSource] = theAlg;
+
+    // Add src term supp alg...; limited number supported
+    std::map<std::string, std::vector<std::string> >::iterator isrc 
+      = realm_.solutionOptions_->elemSrcTermsMap_.find("temperature");
+    if ( isrc != realm_.solutionOptions_->elemSrcTermsMap_.end() ) {
+      std::vector<std::string> mapNameVec = isrc->second;
+      for (size_t k = 0; k < mapNameVec.size(); ++k ) {
+        std::string sourceName = mapNameVec[k];
+        if (sourceName == "steady_2d_thermal" ) {
+          SteadyThermalContactSrcElemSuppAlg *theSrc
+            = new SteadyThermalContactSrcElemSuppAlg(realm_);
+          theAlg->supplementalAlg_.push_back(theSrc);
+        }
+        else {
+          throw std::runtime_error("HeatCondEquationSystem::only steady_2d_thermal element src term is supported");
+        }
+      }
+    }
+  }
+  else {
+    itsrc->second->partVec_.push_back(part);
   }
 
   // deal with adaptivity
@@ -772,8 +799,6 @@ HeatCondEquationSystem::register_non_conformal_bc(
   ScalarFieldType &tempNp1 = temperature_->field_of_state(stk::mesh::StateNP1);
   VectorFieldType &dtdxNone = dtdx_->field_of_state(stk::mesh::StateNone);
 
-  stk::mesh::MetaData &meta_data = realm_.meta_data();
-
   // non-solver; dtdx; allow for element-based shifted
   std::map<AlgorithmType, Algorithm *>::iterator it
     = assembleNodalGradAlgDriver_->algMap_.find(algType);
@@ -785,42 +810,13 @@ HeatCondEquationSystem::register_non_conformal_bc(
   else {
     it->second->partVec_.push_back(part);
   }
-
-  // assemble and normalized lambda/L
-  ScalarFieldType *ncNormalFlux = &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "nc_t_normal_flux"));
-  ScalarFieldType *ncPenalty = &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "nc_t_penalty"));
-  ScalarFieldType *ncArea = &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "nc_t_assembled_area"));
-  stk::mesh::put_field(*ncNormalFlux, *part);
-  stk::mesh::put_field(*ncPenalty, *part);
-  stk::mesh::put_field(*ncArea, *part);
-
-  // create the driver for post-porcessed quantities
-  if ( NULL == assembleNonConformalAlgDriver_ ) {
-    const unsigned fluxFieldSize = 1;
-    assembleNonConformalAlgDriver_ = new AssembleNonConformalAlgorithmDriver(realm_, ncNormalFlux, ncPenalty, ncArea, fluxFieldSize);
-  }
- 
-  std::map<AlgorithmType, Algorithm *>::iterator itnc
-    = assembleNonConformalAlgDriver_->algMap_.find(algType);
-  if ( itnc == assembleNonConformalAlgDriver_->algMap_.end() ) {
-    Algorithm *theAlg = NULL;
-    if ( realm_.realmUsesEdges_ ) 
-      theAlg = new AssembleNonConformalEdgeDiffPenaltyAlgorithm(realm_, part, temperature_, dtdx_, ncNormalFlux, ncPenalty, ncArea, thermalCond_);
-    else
-      theAlg = new AssembleNonConformalElemDiffPenaltyAlgorithm(realm_, part, temperature_, ncNormalFlux, ncPenalty, ncArea, thermalCond_);
-    assembleNonConformalAlgDriver_->algMap_[algType] = theAlg;
-  }
-  else {
-    itnc->second->partVec_.push_back(part);
-  }
   
   // solver; lhs; same for edge and element-based scheme
   std::map<AlgorithmType, SolverAlgorithm *>::iterator itsi =
     solverAlgDriver_->solverAlgMap_.find(algType);
   if ( itsi == solverAlgDriver_->solverAlgMap_.end() ) {
-    AssembleScalarNonConformalSolverAlgorithm *theAlg
-      = new AssembleScalarNonConformalSolverAlgorithm(realm_, part, this, 
-                                                      temperature_, ncNormalFlux, ncPenalty);
+    AssembleScalarDiffNonConformalSolverAlgorithm *theAlg
+      = new AssembleScalarDiffNonConformalSolverAlgorithm(realm_, part, this, temperature_, thermalCond_);
     solverAlgDriver_->solverAlgMap_[algType] = theAlg;
   }
   else {
@@ -895,9 +891,6 @@ HeatCondEquationSystem::solve_and_update()
 
     NaluEnv::self().naluOutputP0() << " " << k+1 << "/" << maxIterations_
                     << std::setw(15) << std::right << name_ << std::endl;
-
-    // post process non-conformal algorithm
-    assemble_non_conformal();
     
     // heat conduction assemble, load_complete and solve
     assemble_and_solve(tTmp_);

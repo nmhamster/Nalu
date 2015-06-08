@@ -77,10 +77,13 @@ public:
   bool useAdapter_;
   int maxRefinementLevel_;
   double extrusionCorrectionFac_;
-  bool ncAlgGaussLabatto_;
   NonConformalAlgType ncAlgType_;
+  bool ncAlgGaussLabatto_;
+  bool ncAlgUpwindAdvection_;
+  bool ncAlgDetailedOutput_;
   bool cvfemShiftMdot_;
   bool cvfemShiftPoisson_;
+  bool cvfemReducedSensPoisson_;
 
   // turbulence model coeffs
   std::map<TurbulenceModelConstant, double> turbModelConstantMap_;
@@ -98,9 +101,11 @@ public:
   std::map<std::string, double> turbScMap_;
   std::map<std::string, double> turbPrMap_;
 
-  // source
+  // source; nodal and fully integrated
   std::map<std::string, std::vector<std::string> > srcTermsMap_;
   std::map<std::string, std::vector<double> > srcTermParamMap_;
+  std::map<std::string, std::vector<std::string> > elemSrcTermsMap_;
+  std::map<std::string, std::vector<double> > elemSrcTermParamMap_;
 
   // nodal gradient
   std::map<std::string, std::string> nodalGradMap_;

@@ -26,7 +26,8 @@ enum AlgorithmType{
   WALL_HF   = 8,
   WALL_CHT  = 9,
   WALL_RAD  = 10,
-  NON_CONFORMAL = 11
+  NON_CONFORMAL = 11,
+  ELEM_SOURCE = 12
 };
 
 enum BoundaryConditionType{

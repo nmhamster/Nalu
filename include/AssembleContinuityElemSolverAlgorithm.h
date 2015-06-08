@@ -38,8 +38,7 @@ public:
   const bool meshMotion_;
 
   // extract fields; nodal
-  VectorFieldType *meshVelocity_;
-  VectorFieldType *velocity_;
+  VectorFieldType *velocityRTM_;
   VectorFieldType *Gpdx_;
   VectorFieldType *coordinates_;
   ScalarFieldType *pressure_;
@@ -47,6 +46,7 @@ public:
 
   const bool shiftMdot_;
   const bool shiftPoisson_;
+  const bool reducedSensitivities_;
 
 };
 

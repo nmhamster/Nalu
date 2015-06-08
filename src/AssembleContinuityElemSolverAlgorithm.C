@@ -14,6 +14,7 @@
 #include <FieldTypeDef.h>
 #include <LinearSystem.h>
 #include <Realm.h>
+#include <SupplementalAlgorithm.h>
 #include <master_element/MasterElement.h>
 
 // stk_mesh/base/fem
@@ -39,25 +40,22 @@ AssembleContinuityElemSolverAlgorithm::AssembleContinuityElemSolverAlgorithm(
   stk::mesh::Part *part,
   EquationSystem *eqSystem)
   : SolverAlgorithm(realm, part, eqSystem),
-    meshMotion_(realm_.has_mesh_motion() | realm_.has_mesh_deformation()),
-    meshVelocity_(NULL),
-    velocity_(NULL),
+    meshMotion_(realm_.does_mesh_move()),
+    velocityRTM_(NULL),
     Gpdx_(NULL),
     coordinates_(NULL),
     pressure_(NULL),
     density_(NULL),
     shiftMdot_(realm_.get_cvfem_shifted_mdot()),
-    shiftPoisson_(realm_.get_cvfem_shifted_poisson())
+    shiftPoisson_(realm_.get_cvfem_shifted_poisson()),
+    reducedSensitivities_(realm_.get_cvfem_reduced_sens_poisson())
 {
   // extract fields; nodal
   stk::mesh::MetaData & meta_data = realm_.meta_data();
-  // hold either mesh velocity or velocity in meshVelocity_ (avoids logic below)
   if ( meshMotion_ )
-    meshVelocity_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "mesh_velocity");
+    velocityRTM_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity_rtm");
   else
-    meshVelocity_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity");
-
-  velocity_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity");
+    velocityRTM_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity");
   Gpdx_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "dpdx");
   coordinates_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, realm_.get_coordinates_name());
   pressure_ = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "pressure");
@@ -98,9 +96,12 @@ AssembleContinuityElemSolverAlgorithm::execute()
   std::vector<double> rhs;
   std::vector<stk::mesh::Entity> connected_nodes;
 
+  // supplemental algorithm setup
+  const size_t supplementalAlgSize = supplementalAlg_.size();
+  for ( size_t i = 0; i < supplementalAlgSize; ++i )
+    supplementalAlg_[i]->setup();
+
   // nodal fields to gather
-  std::vector<double> ws_velocityNp1;
-  std::vector<double> ws_meshVelocity;
   std::vector<double> ws_vrtm;
   std::vector<double> ws_Gpdx;
   std::vector<double> ws_coordinates;
@@ -110,6 +111,7 @@ AssembleContinuityElemSolverAlgorithm::execute()
   // geometry related to populate
   std::vector<double> ws_scs_areav;
   std::vector<double> ws_dndx;
+  std::vector<double> ws_dndx_lhs;
   std::vector<double> ws_deriv;
   std::vector<double> ws_det_j;
   std::vector<double> ws_shape_function;
@@ -127,7 +129,6 @@ AssembleContinuityElemSolverAlgorithm::execute()
   double *p_dpdxIp = &dpdxIp[0];
 
   // deal with state
-  VectorFieldType &velocityNp1 = velocity_->field_of_state(stk::mesh::StateNP1);
   ScalarFieldType &densityNp1 = density_->field_of_state(stk::mesh::StateNP1);
 
   // define some common selectors
@@ -143,6 +144,7 @@ AssembleContinuityElemSolverAlgorithm::execute()
 
     // extract master element
     MasterElement *meSCS = realm_.get_surface_master_element(b.topology());
+    MasterElement *meSCV = realm_.get_volume_master_element(b.topology());
 
     // extract master element specifics
     const int nodesPerElement = meSCS->nodesPerElement_;
@@ -157,8 +159,6 @@ AssembleContinuityElemSolverAlgorithm::execute()
     connected_nodes.resize(nodesPerElement);
 
     // algorithm related
-    ws_velocityNp1.resize(nodesPerElement*nDim);
-    ws_meshVelocity.resize(nodesPerElement*nDim);
     ws_vrtm.resize(nodesPerElement*nDim);
     ws_Gpdx.resize(nodesPerElement*nDim);
     ws_coordinates.resize(nodesPerElement*nDim);
@@ -166,6 +166,7 @@ AssembleContinuityElemSolverAlgorithm::execute()
     ws_density.resize(nodesPerElement);
     ws_scs_areav.resize(numScsIp*nDim);
     ws_dndx.resize(nDim*numScsIp*nodesPerElement);
+    ws_dndx_lhs.resize(nDim*numScsIp*nodesPerElement);
     ws_deriv.resize(nDim*numScsIp*nodesPerElement);
     ws_det_j.resize(numScsIp);
     ws_shape_function.resize(numScsIp*nodesPerElement);
@@ -173,8 +174,6 @@ AssembleContinuityElemSolverAlgorithm::execute()
     // pointers
     double *p_lhs = &lhs[0];
     double *p_rhs = &rhs[0];
-    double *p_velocityNp1 = &ws_velocityNp1[0];
-    double *p_meshVelocity = &ws_meshVelocity[0];
     double *p_vrtm = &ws_vrtm[0];
     double *p_Gpdx = &ws_Gpdx[0];
     double *p_coordinates = &ws_coordinates[0];
@@ -182,14 +181,22 @@ AssembleContinuityElemSolverAlgorithm::execute()
     double *p_density = &ws_density[0];
     double *p_scs_areav = &ws_scs_areav[0];
     double *p_dndx = &ws_dndx[0];
+    double *p_dndx_lhs = reducedSensitivities_ ? &ws_dndx_lhs[0] : &ws_dndx[0];
     double *p_shape_function = &ws_shape_function[0];
 
     if ( shiftMdot_)
       meSCS->shifted_shape_fcn(&p_shape_function[0]);
     else
       meSCS->shape_fcn(&p_shape_function[0]);
-    
+
+    // resize possible supplemental element alg
+    for ( size_t i = 0; i < supplementalAlgSize; ++i )
+      supplementalAlg_[i]->elem_resize(meSCS, meSCV);
+
     for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
+
+      // get elem
+      stk::mesh::Entity elem = b[k];
 
       // zero lhs/rhs
       for ( int p = 0; p < lhsSize; ++p )
@@ -213,10 +220,9 @@ AssembleContinuityElemSolverAlgorithm::execute()
         connected_nodes[ni] = node;
 
         // pointers to real data
-        const double * uNp1   = stk::mesh::field_data(velocityNp1, node );
-        const double * vNp1   = stk::mesh::field_data(*meshVelocity_, node);
         const double * Gjp    = stk::mesh::field_data(*Gpdx_, node );
         const double * coords = stk::mesh::field_data(*coordinates_, node );
+        const double * vrtm   = stk::mesh::field_data(*velocityRTM_, node );
 
         // gather scalars
         p_pressure[ni] = *stk::mesh::field_data(*pressure_, node );
@@ -225,9 +231,7 @@ AssembleContinuityElemSolverAlgorithm::execute()
         // gather vectors
         const int niNdim = ni*nDim;
         for ( int j=0; j < nDim; ++j ) {
-          p_velocityNp1[niNdim+j] = uNp1[j];
-          p_vrtm[niNdim+j] = uNp1[j];
-          p_meshVelocity[niNdim+j] = vNp1[j];
+          p_vrtm[niNdim+j] = vrtm[j];
           p_Gpdx[niNdim+j] = Gjp[j];
           p_coordinates[niNdim+j] = coords[j];
         }
@@ -237,19 +241,15 @@ AssembleContinuityElemSolverAlgorithm::execute()
       double scs_error = 0.0;
       meSCS->determinant(1, &p_coordinates[0], &p_scs_areav[0], &scs_error);
 
-      // compute dndx
+      // compute dndx for residual
       if ( shiftPoisson_ )
-        meSCS->shifted_grad_op(1, &p_coordinates[0], &p_dndx[0], &ws_deriv[0], &ws_det_j[0], &scs_error);
+        meSCS->shifted_grad_op(1, &p_coordinates[0], &ws_dndx[0], &ws_deriv[0], &ws_det_j[0], &scs_error);
       else
-        meSCS->grad_op(1, &p_coordinates[0], &p_dndx[0], &ws_deriv[0], &ws_det_j[0], &scs_error);
+        meSCS->grad_op(1, &p_coordinates[0], &ws_dndx[0], &ws_deriv[0], &ws_det_j[0], &scs_error);
       
-      // manage velocity relative to mesh
-      if ( meshMotion_ ) {
-        const int kSize = num_nodes*nDim;
-        for ( int k = 0; k < kSize; ++k ) {
-          p_vrtm[k] -= p_meshVelocity[k];
-        }
-      }
+      // compute dndx for LHS
+      if ( reducedSensitivities_ )
+        meSCS->shifted_grad_op(1, &p_coordinates[0], &ws_dndx_lhs[0], &ws_deriv[0], &ws_det_j[0], &scs_error);
 
       for ( int ip = 0; ip < numScsIp; ++ip ) {
 
@@ -261,7 +261,7 @@ AssembleContinuityElemSolverAlgorithm::execute()
         int rowL = il*nodesPerElement;
         int rowR = ir*nodesPerElement;
 
-        // setup for ip values
+        // setup for ip values; sneak in geometry for possible reduced sens
         for ( int j = 0; j < nDim; ++j ) {
           p_uIp[j] = 0.0;
           p_rho_uIp[j] = 0.0;
@@ -286,7 +286,7 @@ AssembleContinuityElemSolverAlgorithm::execute()
             p_uIp[j] += r*p_vrtm[nDim*ic+j];
             p_rho_uIp[j] += r*nodalRho*p_vrtm[nDim*ic+j];
             p_dpdxIp[j] += p_dndx[offSetDnDx+j]*nodalPressure;
-            lhsfac += -p_dndx[offSetDnDx+j]*p_scs_areav[ip*nDim+j];
+            lhsfac += -p_dndx_lhs[offSetDnDx+j]*p_scs_areav[ip*nDim+j];
           }
 
           // assemble to lhs; left
@@ -308,6 +308,10 @@ AssembleContinuityElemSolverAlgorithm::execute()
         p_rhs[il] -= mdot/projTimeScale;
         p_rhs[ir] += mdot/projTimeScale;
       }
+
+      // call supplemental
+      for ( size_t i = 0; i < supplementalAlgSize; ++i )
+        supplementalAlg_[i]->elem_execute( &lhs[0], &rhs[0], elem, meSCS, meSCV);
 
       apply_coeff(connected_nodes, rhs, lhs, __FILE__);
 

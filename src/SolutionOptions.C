@@ -61,10 +61,13 @@ SolutionOptions::SolutionOptions()
     useAdapter_(false),
     maxRefinementLevel_(0),
     extrusionCorrectionFac_(1.0),
-    ncAlgGaussLabatto_(true),
     ncAlgType_(NC_ALG_TYPE_DG),
+    ncAlgGaussLabatto_(true),
+    ncAlgUpwindAdvection_(false),
+    ncAlgDetailedOutput_(false),
     cvfemShiftMdot_(false),
-    cvfemShiftPoisson_(false)
+    cvfemShiftPoisson_(false),
+    cvfemReducedSensPoisson_(false)
 {
   // nothing to do
 }
@@ -111,10 +114,13 @@ SolutionOptions::load(const YAML::Node & y_node)
     // shifted CVFEM pressure poisson
     get_if_present(*y_solution_options, "shift_cvfem_mdot", cvfemShiftMdot_, cvfemShiftMdot_);
     get_if_present(*y_solution_options, "shift_cvfem_poisson", cvfemShiftPoisson_, cvfemShiftPoisson_);
+    get_if_present(*y_solution_options, "reduced_sens_cvfem_poisson", cvfemReducedSensPoisson_, cvfemReducedSensPoisson_);
     if ( cvfemShiftMdot_ )
       NaluEnv::self().naluOutputP0() << "Shifted CVFEM mass flow rate" << std::endl;
     if ( cvfemShiftPoisson_ )
       NaluEnv::self().naluOutputP0() << "Shifted CVFEM Poisson" << std::endl;
+    if ( cvfemReducedSensPoisson_)
+      NaluEnv::self().naluOutputP0() << "Reduced sensitivities CVFEM Poisson" << std::endl;
 
     // extract turbulence model; would be nice if we could parse an enum..
     std::string specifiedTurbModel;
@@ -171,8 +177,15 @@ SolutionOptions::load(const YAML::Node & y_node)
           const YAML::Node& ySrc = *y_option.FindValue("source_terms");
           ySrc >> srcTermsMap_;
         }
+        else if (expect_map( y_option, "element_source_terms", optional)) {
+          const YAML::Node& ySrc = *y_option.FindValue("element_source_terms");
+          ySrc >> elemSrcTermsMap_;
+        }
         else if (expect_map( y_option, "source_term_parameters", optional)) {
             y_option["source_term_parameters"] >> srcTermParamMap_;
+        }
+        else if (expect_map( y_option, "element_source_term_parameters", optional)) {
+          y_option["element_source_term_parameters"] >> elemSrcTermParamMap_;
         }
         else if (expect_map( y_option, "projected_nodal_gradient", optional)) {
           y_option["projected_nodal_gradient"] >> nodalGradMap_;
@@ -228,6 +241,8 @@ SolutionOptions::load(const YAML::Node & y_node)
         else if (expect_map( y_option, "non_conformal", optional)) {
           const YAML::Node& y_nc = *y_option.FindValue("non_conformal");
           get_if_present(y_nc, "gauss_labatto_quadrature",  ncAlgGaussLabatto_, ncAlgGaussLabatto_);
+          get_if_present(y_nc, "upwind_advection",  ncAlgUpwindAdvection_, ncAlgUpwindAdvection_);
+          get_if_present(y_nc, "detailed_output",  ncAlgDetailedOutput_, ncAlgDetailedOutput_);
           if (y_nc.FindValue("algorithm_type" )  ) {
             std::string algTypeString = "none";
             y_nc["algorithm_type"] >> algTypeString;
@@ -369,10 +384,9 @@ SolutionOptions::load(const YAML::Node & y_node)
           errorIndicatorType_ = EIT_SIMPLE_VORTICITY;
         else if (type == "simple.dudx2")
           errorIndicatorType_ = EIT_SIMPLE_DUDX2;
-        if (errorIndicatorType_ & EIT_SIMPLE_BASE)
-          {
-            NaluEnv::self().naluOutputP0() << "WARNING: Found debug/test error inidicator type. Input value= " << type << std::endl;
-          }
+        if (errorIndicatorType_ & EIT_SIMPLE_BASE) {
+          NaluEnv::self().naluOutputP0() << "WARNING: Found debug/test error inidicator type. Input value= " << type << std::endl;
+        }
       }
 
       NaluEnv::self().naluOutputP0() << std::endl;

@@ -92,6 +92,9 @@ public:
   Realms *parent();
 
   bool debug() const;
+  bool get_activate_memory_diagnostic();
+  void provide_memory_summary();
+  std::string convert_bytes(double bytes);
 
   void create_mesh();
 
@@ -141,6 +144,7 @@ public:
   std::string get_coordinates_name();
   bool has_mesh_motion();
   bool has_mesh_deformation();
+  bool does_mesh_move();
   bool has_non_matching_boundary_face_alg();
 
   void set_omega(
@@ -157,6 +161,7 @@ public:
   void initialize_non_conformal();
 
   void compute_geometry();
+  void compute_vrtm();
   void compute_l2_scaling();
   void advance_time_step();
   void output_converged_results();
@@ -275,9 +280,11 @@ public:
   double get_mdot_interp();
   bool get_cvfem_shifted_mdot();
   bool get_cvfem_shifted_poisson();
+  bool get_cvfem_reduced_sens_poisson();
   
   bool has_nc_gauss_labatto_quadrature();
   NonConformalAlgType get_nc_alg_type();
+  bool get_nc_alg_upwind_advection();
 
   PropertyEvaluator *
   get_material_prop_eval(
@@ -416,6 +423,9 @@ public:
 
   // allow aura to be optional
   bool activateAura_;
+
+  // allow detailed output (memory) to be provided
+  bool activateMemoryDiagnostic_;
 
   // mesh parts for all boundary conditions
   stk::mesh::PartVector bcPartVec_;

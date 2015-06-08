@@ -6,8 +6,8 @@
 /*------------------------------------------------------------------------*/
 
 
-#ifndef AssembleScalarEdgeSolverAlgorithm_h
-#define AssembleScalarEdgeSolverAlgorithm_h
+#ifndef AssembleContinuityNonConformalSolverAlgorithm_h
+#define AssembleContinuityNonConformalSolverAlgorithm_h
 
 #include<SolverAlgorithm.h>
 #include<FieldTypeDef.h>
@@ -23,36 +23,33 @@ namespace nalu{
 
 class Realm;
 
-class AssembleScalarEdgeSolverAlgorithm : public SolverAlgorithm
+class AssembleContinuityNonConformalSolverAlgorithm : public SolverAlgorithm
 {
 public:
 
-  AssembleScalarEdgeSolverAlgorithm(
+  AssembleContinuityNonConformalSolverAlgorithm(
     Realm &realm,
     stk::mesh::Part *part,
     EquationSystem *eqSystem,
-    ScalarFieldType *scalarQ,
-    VectorFieldType *dqdx,
-    ScalarFieldType *diffFluxCoeff);
-  virtual ~AssembleScalarEdgeSolverAlgorithm() {}
+    ScalarFieldType *pressure);
+  virtual ~AssembleContinuityNonConformalSolverAlgorithm() {}
+
   virtual void initialize_connectivity();
   virtual void execute();
-  
-  double van_leer(
-    const double &dqm,
-    const double &dqp,
-    const double &small);
 
-  const bool meshMotion_;
-  
-  ScalarFieldType *scalarQ_;
-  VectorFieldType *dqdx_;
-  ScalarFieldType *diffFluxCoeff_;
+  ScalarFieldType *pressure_;
   VectorFieldType *velocityRTM_;
   VectorFieldType *coordinates_;
   ScalarFieldType *density_;
-  ScalarFieldType *massFlowRate_;
-  VectorFieldType *edgeAreaVec_;
+  GenericFieldType *exposedAreaVec_;
+ 
+  const bool meshMotion_;
+  
+  // options that prevail over all algorithms created
+  bool robinStyle_;
+  double dsFactor_;
+
+  std::vector< const stk::mesh::FieldBase *> ghostFieldVec_;
 
 };
 
