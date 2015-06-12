@@ -2680,10 +2680,9 @@ Quad92DSCV::Quad92DSCV()
   intgLoc_.resize(92);
   intgLocShift_.resize(92);
   const int numGL = 6;
-  const int numGLmo = 5;
   for ( int row = 0; row < numGL; ++row ) {
-    double fixedGLg = gaussLegen[numGLmo-row];
-    double fixedGLb = gaussLabat[numGLmo-row];
+    double fixedGLg = gaussLegen[row];
+    double fixedGLb = gaussLabat[row];
     const int offSet = row*numGL*nDim_;
     for (int col = 0; col < numGL; ++col) {
       // first standard
@@ -2694,18 +2693,6 @@ Quad92DSCV::Quad92DSCV()
       intgLocShift_[offSet+col*nDim_+1] = fixedGLb;
     }
   }
-
-  /*
-  std::cout << "shiftedSCV ips" << std::endl;
-  for ( int ip = 0; ip < numIntPoints_; ++ip ) {
-    std::cout << "ip: " << ip << " " << intgLocShift_[ip*2] << " " << intgLocShift_[ip*2+1] << std::endl;
-  }
-
-  std::cout << "SCV ips" << std::endl;
-  for ( int ip = 0; ip < numIntPoints_; ++ip ) {
-    std::cout << "ip: " << ip << " " << intgLoc_[ip*2] << " " << intgLoc_[ip*2+1] << std::endl;
-  } */
-
 }
 
 //--------------------------------------------------------------------------
