@@ -912,6 +912,73 @@ HeatCondEquationSystem::solve_and_update()
     timeB = stk::cpu_time();
     timerMisc_ += (timeB-timeA);
   }
+  compute_norm();
+}
+
+//--------------------------------------------------------------------------
+//-------- compute_norm ----------------------------------------------------
+//--------------------------------------------------------------------------
+void
+HeatCondEquationSystem::compute_norm()
+{
+  const bool doIt = false;
+  if ( !doIt )
+    return;
+
+  stk::mesh::MetaData &metaData = realm_.meta_data();
+  stk::mesh::BulkData &bulkData = realm_.bulk_data();
+
+  // save params
+  const int nDim = metaData.spatial_dimension();
+  const double a_ = 1.0;
+  const double k_ = 1.0;
+  const double pi_ = std::acos(-1.0);
+
+  // size and initialize norm-related quantities
+  double l_oo = -1.0e16;
+  double l_norm[2] = {0.0, 0.0};
+  size_t l_nodeCount = 0;
+
+  stk::mesh::Selector s_all_nodes
+    = metaData.locally_owned_part() &stk::mesh::selectField(*temperature_);
+
+  stk::mesh::BucketVector const& node_buckets = bulkData.get_buckets( stk::topology::NODE_RANK, s_all_nodes );
+  for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
+        ib != node_buckets.end() ; ++ib ) {
+    stk::mesh::Bucket & b = **ib ;
+    const stk::mesh::Bucket::size_type length   = b.size();
+    const double * temp = stk::mesh::field_data(*temperature_, b);
+    const double * coords = stk::mesh::field_data(*coordinates_, b);
+    for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
+      // increment node count
+      l_nodeCount++;
+
+      // save off coords
+      const double x = coords[nDim*k+0];
+      const double y = coords[nDim*k+1];
+      const double analytical = k_/4.0*(cos(2.*a_*pi_*x) + cos(2.*a_*pi_*y));
+      const double diff = std::abs(analytical - temp[k]);
+      // norms...
+      l_oo = std::max(diff, l_oo);
+      l_norm[0] += diff;
+      l_norm[1] += diff*diff;
+    }
+  }
+
+  double g_l_oo = 0.0;
+  double g_norm[2] = {0.0,0.0};
+  size_t g_nodeCount = 0;
+
+  stk::ParallelMachine comm = NaluEnv::self().parallel_comm();
+
+  stk::all_reduce_sum(comm, &l_nodeCount, &g_nodeCount, 1);
+  stk::all_reduce_max(comm, &l_oo, &g_l_oo, 1);
+  stk::all_reduce_sum(comm, l_norm, g_norm, 2);
+  
+  NaluEnv::self().naluOutputP0() << "Norm Summary: Node Count: " << g_nodeCount << std::endl;
+  NaluEnv::self().naluOutputP0() << "Loo: " << g_l_oo << std::endl;
+  NaluEnv::self().naluOutputP0() << "L1:  " << g_norm[0]/g_nodeCount << std::endl;
+  NaluEnv::self().naluOutputP0() << "L2:  " << std::sqrt(g_norm[1])/std::sqrt(g_nodeCount) << std::endl;
 }
 
 //--------------------------------------------------------------------------

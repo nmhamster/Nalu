@@ -39,7 +39,8 @@ SteadyThermalContactSrcElemSuppAlg::SteadyThermalContactSrcElemSuppAlg(
     k_(1.0),
     pi_(std::acos(-1.0)),
     useShifted_(false),
-    nDim_(realm_.spatialDimension_)
+    nDim_(realm_.spatialDimension_),
+    evalAtIps_(true)
 {
   // save off fields
   stk::mesh::MetaData & meta_data = realm_.meta_data();
@@ -62,6 +63,7 @@ SteadyThermalContactSrcElemSuppAlg::elem_resize(
   const int numScvIp = meSCV->numIntPoints_;
   ws_shape_function_.resize(numScvIp*nodesPerElement);
   ws_coordinates_.resize(nDim_*nodesPerElement);
+  ws_nodalSrc_.resize(nodesPerElement);
 
   // compute shape function
   if ( useShifted_ )
@@ -116,25 +118,52 @@ SteadyThermalContactSrcElemSuppAlg::elem_execute(
     }
   }
 
-  // interpolate
-  for ( int ip = 0; ip < numScvIp; ++ip ) {
-    
-    // nearest node to ip
-    const int nearestNode = ipNodeMap[ip];
-
-    // zero out
-    for ( int j =0; j < nDim_; ++j )
-      scvCoords_[j] = 0.0;
-
-    const int offSet = ip*nodesPerElement;
-    for ( int ic = 0; ic < nodesPerElement; ++ic ) {
-      const double r = ws_shape_function_[offSet+ic];
-      for ( int j = 0; j < nDim_; ++j )
-        scvCoords_[j] += r*ws_coordinates_[ic*nDim_+j];
+  // choose a form...
+  if ( evalAtIps_ ) {
+    // interpolate to ips and evaluate source
+    for ( int ip = 0; ip < numScvIp; ++ip ) {
+      
+      // nearest node to ip
+      const int nearestNode = ipNodeMap[ip];
+      
+      // zero out
+      for ( int j =0; j < nDim_; ++j )
+        scvCoords_[j] = 0.0;
+      
+      const int offSet = ip*nodesPerElement;
+      for ( int ic = 0; ic < nodesPerElement; ++ic ) {
+        const double r = ws_shape_function_[offSet+ic];
+        for ( int j = 0; j < nDim_; ++j )
+          scvCoords_[j] += r*ws_coordinates_[ic*nDim_+j];
+      }
+      const double x = scvCoords_[0];
+      const double y = scvCoords_[1];
+      rhs[nearestNode] += k_/4.0*(2.0*a_*pi_)*(2.0*a_*pi_)*(cos(2.0*a_*pi_*x) + cos(2.0*a_*pi_*y))*scVolume[ip];
     }
-    const double x = scvCoords_[0];
-    const double y = scvCoords_[1];
-    rhs[nearestNode] += k_/4.0*(2.0*a_*pi_)*(2.0*a_*pi_)*(cos(2.0*a_*pi_*x) + cos(2.0*a_*pi_*y))*scVolume[ip];
+  }
+  else {
+    // evaluate source at nodal location
+    for ( int ni = 0; ni < nodesPerElement; ++ni ) {
+      const double x = ws_coordinates_[ni*nDim_+0];
+      const double y = ws_coordinates_[ni*nDim_+1];
+      ws_nodalSrc_[ni] = k_/4.0*(2.0*a_*pi_)*(2.0*a_*pi_)*(cos(2.0*a_*pi_*x) + cos(2.0*a_*pi_*y));
+    }
+
+    // interpolate nodal source term to ips and assemble to nodes
+    for ( int ip = 0; ip < numScvIp; ++ip ) {
+      
+      // nearest node to ip
+      const int nearestNode = ipNodeMap[ip];
+      
+      double ipSource = 0.0;
+
+      const int offSet = ip*nodesPerElement;
+      for ( int ic = 0; ic < nodesPerElement; ++ic ) {
+        const double r = ws_shape_function_[offSet+ic];
+        ipSource += r*ws_nodalSrc_[ic];
+      }
+      rhs[nearestNode] += ipSource*scVolume[ip];
+    } 
   }
 }
 

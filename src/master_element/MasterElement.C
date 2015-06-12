@@ -2693,6 +2693,37 @@ Quad92DSCV::Quad92DSCV()
       intgLocShift_[offSet+col*nDim_+1] = fixedGLb;
     }
   }
+
+  const double cornerVol = 0.25;
+  const double sideVol   = 0.5;
+  const double centerVol = 1.0;
+  const double quadWeight = 0.25;
+
+  //associate node with ip
+  std::vector<std::vector<int>>nodeIpMap(nodesPerElement_);
+  for (int j = 0; j < numIntPoints_; ++j) {
+    nodeIpMap[ipNodeMap_[j]].push_back(j);
+  }
+
+  ipWeight_.resize(36);
+  for (int j = 0; j < 4; ++j) {
+    ipWeight_[nodeIpMap[0][j]] = cornerVol;
+    ipWeight_[nodeIpMap[1][j]] = cornerVol;
+    ipWeight_[nodeIpMap[2][j]] = cornerVol;
+    ipWeight_[nodeIpMap[3][j]] = cornerVol;
+
+    ipWeight_[nodeIpMap[4][j]] = sideVol;
+    ipWeight_[nodeIpMap[5][j]] = sideVol;
+    ipWeight_[nodeIpMap[6][j]] = sideVol;
+    ipWeight_[nodeIpMap[7][j]] = sideVol;
+
+    ipWeight_[nodeIpMap[8][j]] = centerVol;
+  }
+
+  for (int j = 0; j < 36; ++j) {
+    ipWeight_[j] *= quadWeight;
+  }
+
 }
 
 //--------------------------------------------------------------------------
@@ -2700,7 +2731,7 @@ Quad92DSCV::Quad92DSCV()
 //--------------------------------------------------------------------------
 Quad92DSCV::~Quad92DSCV()
 {
-  // does nothing
+ // does nothing
 }
 
 //--------------------------------------------------------------------------
@@ -2709,43 +2740,145 @@ Quad92DSCV::~Quad92DSCV()
 const int *
 Quad92DSCV::ipNodeMap()
 {
-  // define scv->node mappings
-  return &ipNodeMap_[0];
+ // define scv->node mappings
+ return &ipNodeMap_[0];
 }
 
 //--------------------------------------------------------------------------
 //-------- determinant -----------------------------------------------------
 //--------------------------------------------------------------------------
 void Quad92DSCV::determinant(
-			     const int /*nelem*/,
-			     const double */*coords*/,
-			     double *volume,
-			     double *error)
-{  
-  // hack... for uniform mesh
-  const double deltaX = 0.1;
-  const double deltaY = 0.1;
-  const double elemVolume = deltaX*deltaY;
-  const double scvQuad = elemVolume/16.0;
-  // define a scaling factor for each ip in the scv quadrant
-  const double scaleFac[36] = {
-    0.25, 0.25, 0.50, 0.50, 0.25, 0.25,
-    0.25, 0.25, 0.50, 0.50, 0.25, 0.25,
-    0.50, 0.50, 1.00, 1.00, 0.50, 0.50,
-    0.50, 0.50, 1.00, 1.00, 0.50, 0.50,
-    0.25, 0.25, 0.50, 0.50, 0.25, 0.25,
-    0.25, 0.25, 0.50, 0.50, 0.25, 0.25 };
+  const int nelem,
+  const double *coords,
+  double *volume,
+  double *error)
+{
 
-  // fill it in
-  for ( int ip =0; ip < numIntPoints_; ++ip )
-    volume[ip] = scvQuad*scaleFac[ip];
- 
-  *error = 0.0;
+ std::vector<double>isoParCoord(2);
+ std::vector<double>jacobian(4);
+
+ std::vector<double>elemNodalCoords(nDim_*nodesPerElement_);
+ std::vector<double>shapeDerivs(nDim_*nodesPerElement_);
+
+ // raw pointers
+ double* p_isoParCoord     = isoParCoord.data();
+ double* p_jacobian        = jacobian.data();
+ double* p_elemNodalCoords = elemNodalCoords.data();
+ double* p_shapeDerivs     = shapeDerivs.data();
+
+ for (size_t k = 0; k < nelem; ++k) {
+   const size_t elem_offset = nodesPerElement_*k;
+
+   //load up the element coordinates in the expected format
+   for (int ni = 0; ni < nodesPerElement_; ++ni) {
+     const size_t dim_offset = ni*nDim_;
+     const size_t offset = dim_offset + elem_offset;
+     for (int j = 0; j < nDim_; ++j) {
+       p_elemNodalCoords[dim_offset+j] = coords[offset + j];
+     }
+   }
+
+   for (int ni = 0; ni < numIntPoints_; ++ni) {
+     const size_t dim_offset = nDim_*ni;
+
+     //load up isoparametric coordinates for this ip
+     p_isoParCoord[0] = intgLoc_[dim_offset];
+     p_isoParCoord[1] = intgLoc_[dim_offset+1];
+
+
+     // compute shape derivatives at this ip
+     point_shape_deriv(p_isoParCoord, p_shapeDerivs);
+
+     //weighted jacobian determinant
+     volume[ni] = ipWeight_[ni] * jacobian_determinant(p_elemNodalCoords,p_shapeDerivs);
+   }
+ }
+
+ // all is always well; no error checking
+ *error = 0;
 }
 
-//--------------------------------------------------------------------------
-//-------- shape_fcn -------------------------------------------------------
-//--------------------------------------------------------------------------
+double
+Quad92DSCV::jacobian_determinant(
+  const double *elemNodalCoords,
+  const double *shapeDeriv)
+{
+
+  double dxds = 0.0;
+  double dxdt = 0.0;
+  double dyds = 0.0;
+  double dydt = 0.0;
+
+  for (int ni = 0; ni < nodesPerElement_; ++ni) {
+    int offSet = nDim_ * ni;
+    const double xCoord = elemNodalCoords[offSet];
+    const double yCoord = elemNodalCoords[offSet+1];
+    const double dnds  = shapeDeriv[offSet];
+    const double dndt  = shapeDeriv[offSet+1];
+
+    dxds += dnds * xCoord;
+    dxdt += dndt * xCoord;
+    dyds += dnds * yCoord;
+    dydt += dndt * yCoord;
+  }
+  const double det_j = dxds * dydt - dyds * dxdt;
+
+  if (det_j <= 0.0)
+    throw std::runtime_error("Negative or zero volume!");
+
+  return det_j;
+
+}
+
+void
+Quad92DSCV::point_shape_deriv(
+ const double *isoParCoords,
+ double *deriv)
+{
+
+ double s = isoParCoords[0];
+ double t = isoParCoords[1];
+
+ double t2 = t*t;
+ double s2 = s*s;
+
+ //node 0
+ deriv[0]  = 0.25 * (2.0 * s * t2 - 2.0 * s * t - t2 + t);
+ deriv[1]  = 0.25 * (2.0 * s2 * t - 2.0 * s * t - s2 + s);
+
+ //node 1
+ deriv[2]  = 0.25 * (2.0 * s * t2 - 2.0 * s * t + t2 - t);
+ deriv[3] = 0.25 * (2.0 * s2 * t + 2.0 * s * t - s2 - s);
+
+ //node 2
+ deriv[4]  = 0.25 * (2.0 * s * t2 + 2.0 * s * t + t2 + t);
+ deriv[5] = 0.25 * (2.0 * s2 * t + 2.0 * s * t + s2 + s);
+
+ //node 3
+ deriv[6]  = 0.25 * (2.0 * s * t2 + 2.0 * s * t - t2 - t);
+ deriv[7] = 0.25 * (2.0 * s2 * t - 2.0 * s * t + s2 - s);
+
+ //node 4
+ deriv[8]  = -0.5 * (2.0 * s * t2 - 2.0 * s * t);
+ deriv[9] = -0.5 * (2.0 * s2 * t - s2 - 2.0 * t + 1.0);
+
+ //node 5
+ deriv[10]  = -0.5 * (2.0 * s * t2 + t2 - 2.0 * s - 1.0);
+ deriv[11] = -0.5 * (2.0 * s2 * t + 2.0 * s * t);
+
+ //node 6
+ deriv[12]  = -0.5 * (2.0 * s * t2 + 2.0 * s * t);
+ deriv[13] = -0.5 * (2.0 * s2 * t + s2 - 2.0 * t - 1.0);
+
+ //node 7
+ deriv[14]  = -0.5 * (2.0 * s * t2 - t2 - 2.0 * s + 1.0);
+ deriv[15] = -0.5 * (2.0 * s2 * t - 2.0 * s * t);
+
+ //node 8
+ deriv[16]  = 2.0 * s * t2 - 2.0 * s;
+ deriv[17] = 2.0 * s2 * t - 2.0 * t;
+
+}
 void
 Quad92DSCV::shape_fcn(double *shpfc)
 {
@@ -2886,6 +3019,34 @@ Quad92DSCS::Quad92DSCS()
   // exposed face; na
   intgExpFace_.resize(12);
   
+  // Surface integration info
+  // Save the direction of the integration (e.g. if constant s or constant t),
+  // orientation (direction along contour), and integration weight for each IP
+  // weight = gauss_quadrature_weight_for_ip * orientation_of_curve_for_ip * length_of_surface_in_isoparametric_units
+
+  const double quadWeight = 0.5;
+  auto weight = [=] (double length, int orientation)
+      { return quadWeight * ((orientation > 0) - (orientation < 0)) * length; };
+
+  ipInfo_.resize(24);
+  ipInfo_[0]  = {Jacobian::DIR_T, weight(0.5,+1)}; ipInfo_[1]  = {Jacobian::DIR_S, weight(1.0,-1)};
+  ipInfo_[2]  = {Jacobian::DIR_T, weight(1.0,+1)}; ipInfo_[3]  = {Jacobian::DIR_S, weight(0.5,-1)};
+
+  ipInfo_[4]  = {Jacobian::DIR_T, weight(0.5,-1)}; ipInfo_[5]  = {Jacobian::DIR_S, weight(0.5,-1)};
+  ipInfo_[6]  = {Jacobian::DIR_T, weight(1.0,-1)}; ipInfo_[7]  = {Jacobian::DIR_S, weight(1.0,-1)};
+
+  ipInfo_[8]  = {Jacobian::DIR_T, weight(1.0,-1)}; ipInfo_[9]  = {Jacobian::DIR_S, weight(0.5,+1)};
+  ipInfo_[10] = {Jacobian::DIR_T, weight(0.5,-1)}; ipInfo_[11] = {Jacobian::DIR_S, weight(1.0,+1)};
+
+  ipInfo_[12] = {Jacobian::DIR_T, weight(1.0,+1)}; ipInfo_[13] = {Jacobian::DIR_S, weight(1.0,+1)};
+  ipInfo_[14] = {Jacobian::DIR_T, weight(0.5,+1)}; ipInfo_[15] = {Jacobian::DIR_S, weight(0.5,+1)};
+
+  ipInfo_[16] = {Jacobian::DIR_T, weight(0.5,+1)}; ipInfo_[17] = {Jacobian::DIR_T, weight(0.5,-1)};
+  ipInfo_[18] = {Jacobian::DIR_T, weight(0.5,-1)}; ipInfo_[19] = {Jacobian::DIR_T, weight(0.5,+1)};
+
+  ipInfo_[20] = {Jacobian::DIR_S, weight(0.5,-1)}; ipInfo_[21] = {Jacobian::DIR_S, weight(0.5,-1)};
+  ipInfo_[22] = {Jacobian::DIR_S, weight(0.5,+1)}; ipInfo_[23] = {Jacobian::DIR_S, weight(0.5,+1)};
+
 }
 
 //--------------------------------------------------------------------------
@@ -2899,14 +3060,72 @@ Quad92DSCS::~Quad92DSCS()
 //--------------------------------------------------------------------------
 //-------- determinant -----------------------------------------------------
 //--------------------------------------------------------------------------
-void Quad92DSCS::determinant(
-  const int nelem,
-  const double *coords,
-  double *areav,
-  double *error)
+
+void
+Quad92DSCS::determinant(const int nelem,
+  const double* coords,
+  double* areav,
+  double* error)
 {
-  SIERRA_FORTRAN(quad9_scs_det)
-    ( &nelem, &nodesPerElement_, &numIntPoints_, coords, areav );
+
+  //  SIERRA_FORTRAN(quad9_scs_det)
+  //    ( &nelem, &nodesPerElement_, &numIntPoints_, coords, areav );
+
+  //returns the normal vector (dyds,-dxds) for constant t curves
+  //returns the normal vector (dydt,-dxdt) for constant s curves
+
+  std::vector<double>isoParCoord(nDim_);
+  std::vector<double>jacobian(nDim_*nDim_);
+
+  std::vector<double>elemNodalCoords(nDim_*nodesPerElement_);
+  std::vector<double>shapeDerivs(nDim_*nodesPerElement_);
+
+  // raw pointers
+  double* p_isoParCoord     = isoParCoord.data();
+  double* p_jacobian        = jacobian.data();
+  double* p_elemNodalCoords = elemNodalCoords.data();
+  double* p_shapeDerivs     = shapeDerivs.data();
+
+  for (size_t k = 0; k < nelem; ++k) {
+    const size_t elem_offset = nodesPerElement_*k;
+
+    //load up the element coordinates in the expected format
+    for (int ni = 0; ni < nodesPerElement_; ++ni) {
+      const size_t dim_offset = ni*nDim_;
+      const size_t offset = dim_offset + elem_offset;
+      for (int j = 0; j < nDim_; ++j) {
+        p_elemNodalCoords[dim_offset+j] = coords[offset + j];
+      }
+    }
+
+    for (int ni = 0; ni < numIntPoints_; ++ni) {
+      const size_t dim_offset = nDim_*ni;
+      const size_t offset = dim_offset + elem_offset;
+
+      p_isoParCoord[0] = intgLoc_[dim_offset];
+      p_isoParCoord[1] = intgLoc_[dim_offset+1];
+
+      // compute the shape derivatives at the isoparametric coordinates
+      //  . . . used only to compute jacobian
+      point_shape_deriv(p_isoParCoord, p_shapeDerivs);
+      point_jacobian(p_elemNodalCoords,p_shapeDerivs,p_jacobian);
+
+      // TODO: move switch outside of loop . . .reorder the ips such that all DIR_S ips are first
+      // TODO: only calculate the required components (e.g. dnds and dxds, dyds for DIR_S type)
+      switch (ipInfo_[ni].direction) {
+        case Jacobian::DIR_S:
+          areav[offset]   =  ipInfo_[ni].weight * p_jacobian[Jacobian::DYDS];
+          areav[offset+1] = -ipInfo_[ni].weight * p_jacobian[Jacobian::DXDS];
+          break;
+        case Jacobian::DIR_T:
+          areav[offset]   =  ipInfo_[ni].weight * p_jacobian[Jacobian::DYDT];
+          areav[offset+1] = -ipInfo_[ni].weight * p_jacobian[Jacobian::DXDT];
+          break;
+        default:
+          throw std::runtime_error("Not a direction");
+      }
+    }
+  }
 
   // all is always well; no error checking
   *error = 0;
@@ -3038,6 +3257,178 @@ Quad92DSCS::quad9_shape_fcn(
     shpfc[nineIp+7] = -0.50 * s     *  one_p_t *  one_m_t * one_m_s;
     shpfc[nineIp+8] =  one_m_ss * one_m_tt;
   }
+}
+
+void
+Quad92DSCS::point_jacobian(
+  const double *elemNodalCoords,
+  const double *shapeDeriv,
+  double *jacobian)
+{
+
+  for (int j = 0; j < nDim_ * nDim_; ++j) {
+    jacobian[j] = 0.0;
+  }
+
+  for (int ni = 0; ni < nodesPerElement_; ++ni) {
+    int offSet = nDim_ * ni;
+    const double xCoord = elemNodalCoords[offSet];
+    const double yCoord = elemNodalCoords[offSet+1];
+    const double dnds  = shapeDeriv[offSet];
+    const double dndt  = shapeDeriv[offSet+1];
+
+    jacobian[Jacobian::DXDS] += dnds * xCoord;
+    jacobian[Jacobian::DXDT] += dndt * xCoord;
+    jacobian[Jacobian::DYDS] += dnds * yCoord;
+    jacobian[Jacobian::DYDT] += dndt * yCoord;
+  }
+}
+
+void
+Quad92DSCS::point_shape_deriv(
+  const double *isoParCoords,
+  double *deriv)
+{
+
+  double s = isoParCoords[0];
+  double t = isoParCoords[1];
+
+  double t2 = t*t;
+  double s2 = s*s;
+
+  //node 0
+  deriv[0]  = 0.25 * (2.0 * s * t2 - 2.0 * s * t - t2 + t);
+  deriv[1]  = 0.25 * (2.0 * s2 * t - 2.0 * s * t - s2 + s);
+
+  //node 1
+  deriv[2]  = 0.25 * (2.0 * s * t2 - 2.0 * s * t + t2 - t);
+  deriv[3] = 0.25 * (2.0 * s2 * t + 2.0 * s * t - s2 - s);
+
+  //node 2
+  deriv[4]  = 0.25 * (2.0 * s * t2 + 2.0 * s * t + t2 + t);
+  deriv[5] = 0.25 * (2.0 * s2 * t + 2.0 * s * t + s2 + s);
+
+  //node 3
+  deriv[6]  = 0.25 * (2.0 * s * t2 + 2.0 * s * t - t2 - t);
+  deriv[7] = 0.25 * (2.0 * s2 * t - 2.0 * s * t + s2 - s);
+
+  //node 4
+  deriv[8]  = -0.5 * (2.0 * s * t2 - 2.0 * s * t);
+  deriv[9] = -0.5 * (2.0 * s2 * t - s2 - 2.0 * t + 1.0);
+
+  //node 5
+  deriv[10]  = -0.5 * (2.0 * s * t2 + t2 - 2.0 * s - 1.0);
+  deriv[11] = -0.5 * (2.0 * s2 * t + 2.0 * s * t);
+
+  //node 6
+  deriv[12]  = -0.5 * (2.0 * s * t2 + 2.0 * s * t);
+  deriv[13] = -0.5 * (2.0 * s2 * t + s2 - 2.0 * t - 1.0);
+
+  //node 7
+  deriv[14]  = -0.5 * (2.0 * s * t2 - t2 - 2.0 * s + 1.0);
+  deriv[15] = -0.5 * (2.0 * s2 * t - 2.0 * s * t);
+
+  //node 8
+  deriv[16]  = 2.0 * s * t2 - 2.0 * s;
+  deriv[17] = 2.0 * s2 * t - 2.0 * t;
+
+}
+
+double
+Quad92DSCS::contour_length_fixed_s(
+    const double *coords,
+    double tBegin,
+    double tEnd,
+    double sValue)
+{
+  // Probably can't compute this analytically for p = 2
+  // Gauss-Legendre quadrature is not exact unfortunately
+  // overkill with a three-point quadrature for the time being
+
+  std::vector<double>abcissae = {-0.2*std::sqrt(15.0), 0.0, 0.2*std::sqrt(15.0)};
+  std::vector<double>weights  = {5.0/9.0, 8.0/9.0, 5.0/9.0};
+
+  //map abcissae to segment (-1,1)
+  const double isoParametricLength = tEnd - tBegin;
+  for (int j = 0; j < weights.size(); ++j) {
+    abcissae[j] = 0.5*( (tBegin+tEnd) + isoParametricLength * abcissae[j]);
+  }
+
+  std::vector<double>jacobian(nDim_*nDim_);
+  std::vector<double>isoParCoords(nDim_);
+  std::vector<double>shapeDerivs(nDim_*nodesPerElement_);
+  double* p_isoParCoords = isoParCoords.data();
+  double* p_jacobian = jacobian.data();
+  double* p_shapeDerivs = shapeDerivs.data();
+
+  //fixed value of s
+  p_isoParCoords[0] = sValue;
+
+  double sum = 0.0;
+  for (int j = 0; j < weights.size(); ++j) {
+    p_isoParCoords[1] = abcissae[j];
+    point_shape_deriv(p_isoParCoords, p_shapeDerivs);
+    point_jacobian(coords,p_shapeDerivs,p_jacobian);
+
+    const double dxdt = p_jacobian[Jacobian::DXDT];
+    const double dydt = p_jacobian[Jacobian::DYDT];
+
+    sum += weights[j] * std::sqrt(dxdt * dxdt + dydt * dydt);
+  }
+
+  sum *= isoParametricLength * 0.5;
+
+  return sum;
+}
+
+double
+Quad92DSCS::contour_length_fixed_t(
+    const double *coords,
+    double sBegin,
+    double sEnd,
+    double tValue)
+{
+  // Probably can't compute this analytically for p = 2
+  // Gauss-Legendre quadrature is not exact unfortunately
+  // So over-kill with a 3-point quadrature for the time being
+
+  //quadrature rule
+  std::vector<double>abcissae = {-0.2*std::sqrt(15.0), 0.0, 0.2*std::sqrt(15.0)};
+  std::vector<double>weights  = {5.0/9.0, 8.0/9.0, 5.0/9.0};
+
+  //map abcissae to segment (-1,1)
+  const double isoParametricLength = sEnd - sBegin;
+  for (int j = 0; j < weights.size(); ++j) {
+    abcissae[j] = 0.5 * ((sBegin + sEnd) + isoParametricLength * abcissae[j]);
+  }
+
+  //compute Jacobian at the Gauss-quadrature points
+  std::vector<double>jacobian(nDim_*nDim_);
+  std::vector<double>isoParCoords(nDim_);
+  std::vector<double>shapeDerivs(nDim_*nodesPerElement_);
+  double* p_isoParCoords = isoParCoords.data();
+  double* p_jacobian = jacobian.data();
+  double* p_shapeDerivs = shapeDerivs.data();
+
+  //fixed value of t
+  p_isoParCoords[1] = tValue;
+
+  //actual integration
+  double sum = 0.0;
+  for (int j = 0; j < weights.size(); ++j) {
+    p_isoParCoords[0] = abcissae[j];
+    point_shape_deriv(p_isoParCoords, p_shapeDerivs);
+    point_jacobian(coords,p_shapeDerivs,p_jacobian);
+
+    const double dxds = p_jacobian[Jacobian::DXDS];
+    const double dyds = p_jacobian[Jacobian::DYDS];
+
+    sum += weights[j]*std::sqrt(dxds * dxds + dyds * dyds);
+  }
+
+  sum *= isoParametricLength*0.5;
+
+  return sum;
 }
 
 //--------------------------------------------------------------------------
@@ -4372,6 +4763,21 @@ Edge32DSCS::Edge32DSCS()
   intgLocShift_[0] = -1.00; intgLocShift_[1]  = -1.00; 
   intgLocShift_[2] =  0.00; intgLocShift_[3]  =  0.00; 
   intgLocShift_[4] =  1.00; intgLocShift_[5]  =  1.00; 
+
+  //Gauss quadrature weight
+  const double quadWeight = 0.5;
+
+  //length of the scs in isoparametric units
+  const double endLength = 0.5;
+  const double centerLength = 1.0;
+
+  ipWeight_.resize(6);
+  ipWeight_[0] = quadWeight * endLength;
+  ipWeight_[1] = quadWeight * endLength;
+  ipWeight_[2] = quadWeight * centerLength;
+  ipWeight_[3] = quadWeight * centerLength;
+  ipWeight_[4] = quadWeight * endLength;
+  ipWeight_[5] = quadWeight * endLength;
 }
 
 //--------------------------------------------------------------------------
@@ -4402,14 +4808,79 @@ void Edge32DSCS::determinant(
   double *error)
 {
   int lerr = 0;
+//
+//  SIERRA_FORTRAN(edge32d_scs_det)
+//    ( &nelem, &nodesPerElement_, &numIntPoints_,
+//      coords, areav );
 
-  SIERRA_FORTRAN(edge32d_scs_det)
-    ( &nelem, &nodesPerElement_, &numIntPoints_,
-      coords, areav );
+  std::vector<double>normalVec(nDim_);
+  std::vector<double>elemNodalCoords(nDim_*nodesPerElement_);
+
+  // raw pointers
+  double* p_normalVec       = normalVec.data();
+  double* p_elemNodalCoords = elemNodalCoords.data();
+
+  for (size_t k = 0; k < nelem; ++k) {
+    const size_t elem_offset = nodesPerElement_*k;
+
+    //load up the element coordinates in the expected format
+    for (int ni = 0; ni < nodesPerElement_; ++ni) {
+      const size_t dim_offset = ni*nDim_;
+      const size_t offset = dim_offset + elem_offset;
+      for (int j = 0; j < nDim_; ++j) {
+        p_elemNodalCoords[dim_offset+j] = coords[offset + j];
+      }
+    }
+
+    for (int ni = 0; ni < numIntPoints_; ++ni) {
+      const size_t dim_offset = ni*nDim_;
+      const size_t offset = dim_offset+elem_offset;
+      const double s = intgLoc_[ni];
+
+      normal_vector(p_elemNodalCoords, s, p_normalVec);
+      areav[offset]   = ipWeight_[ni] * p_normalVec[0];
+      areav[offset+1] = ipWeight_[ni] * p_normalVec[1];
+    }
+  }
 
   // check
   *error = (lerr == 0) ? 0.0 : 1.0;
 
+}
+
+//--------------------------------------------------------------------------
+//-------- normal_vector ---------------------------------------------------
+//--------------------------------------------------------------------------
+
+void
+Edge32DSCS::normal_vector(
+  const double *coords,
+  const double s,
+  double *normalVec)
+{
+  // create an parameterization of the curve
+  // r(s) = (x(s),y(s)) = (a0 + a1 s + a2 s^2, b0 + b1 s + b2 s^2);
+  // r(-1) = (x0,y0); r(0) = (x2,y2); r(1) = (x1,y1);
+  // NOTE: 0----2----1 node order
+
+  // returns the normal vector (dyds,-dxds) evaluated at s
+
+  //coordinate names
+  const double x0 = coords[0]; const double y0 = coords[1];
+  const double x1 = coords[2]; const double y1 = coords[3];
+  const double x2 = coords[4]; const double y2 = coords[5];
+
+  const double a1 = 0.5 * (x1 - x0);
+  const double a2 = 0.5 * (x1 - 2.0 * x2 + x0);
+
+  const double b1 = 0.5 * (y1 - y0);
+  const double b2 = 0.5 * (y1 - 2.0 * y2 + y0);
+
+  const double dxds = a1 + 2.0 * a2 * s;
+  const double dyds = b1 + 2.0 * b2 * s;
+
+  normalVec[0] =  dyds;
+  normalVec[1] = -dxds;
 }
 
 //--------------------------------------------------------------------------

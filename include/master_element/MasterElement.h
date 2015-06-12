@@ -20,6 +20,22 @@ struct topology;
 namespace sierra{
 namespace nalu{
 
+namespace Jacobian{
+enum Index
+{
+  DXDS = 0,
+  DXDT = 1,
+  DYDS = 2,
+  DYDT = 3
+};
+
+enum Direction
+{
+  DIR_S = 0,
+  DIR_T = 1
+};
+}
+
 class MasterElement
 {
 public:
@@ -655,6 +671,17 @@ public:
     const double *par_coord, 
     double* shape_fcn);
 
+  double jacobian_determinant(
+    const double *elemNodalCoords,
+    const double *shapeDerivs);
+
+  void point_shape_deriv(
+     const double *isoParCoords,
+     double *deriv);
+
+private:
+  std::vector<double> ipWeight_;
+
 };
 
 // 2D Quad 9 subcontrol surface
@@ -704,6 +731,36 @@ public:
     const int &npts,
     const double *par_coord, 
     double* shape_fcn);
+
+  void point_jacobian(
+      const double *elemNodalCoords,
+      const double *shapeDerivs,
+      double *jacobian);
+
+  void point_shape_deriv(
+     const double *isoParCoords,
+     double *deriv);
+
+  double contour_length_fixed_t(
+      const double *coords,
+      double sBegin,
+      double sEnd,
+      double tValue);
+
+  double contour_length_fixed_s(
+    const double *coords,
+    double tBegin,
+    double tEnd,
+    double sValue);
+
+private:
+
+  struct ContourData {
+    int direction;
+    double weight;
+  };
+
+  std::vector<ContourData>ipInfo_;
 
 };
 
@@ -967,11 +1024,19 @@ public:
     double *areav,
     double * error );
 
+  void normal_vector(
+    const double *coords,
+    const double s,
+    double *normalVec);
+
   void shape_fcn(
     double *shpfc);
 
   void shifted_shape_fcn(
     double *shpfc);
+
+private:
+  std::vector<double> ipWeight_;
 };
 
 } // namespace nalu

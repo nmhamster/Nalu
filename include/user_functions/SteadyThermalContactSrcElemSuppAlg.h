@@ -52,11 +52,13 @@ public:
   const double pi_;
   const bool useShifted_;
   const int nDim_;
+  const bool evalAtIps_;
 
   // scratch space
   std::vector<double> scvCoords_;
   std::vector<double> ws_shape_function_;
   std::vector<double> ws_coordinates_;
+  std::vector<double> ws_nodalSrc_;
 };
 
 } // namespace nalu

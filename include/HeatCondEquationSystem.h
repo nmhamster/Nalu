@@ -69,6 +69,7 @@ public:
       const std::map<std::string, std::vector<double> > &theParams);
 
   void solve_and_update();
+  void compute_norm();
 
   void initialize();
   void reinitialize_linear_system();
