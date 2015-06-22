@@ -21,6 +21,7 @@ namespace sierra{
 namespace nalu{
 
 namespace Jacobian{
+
 enum Index
 {
   DXDS = 0,
@@ -732,31 +733,20 @@ public:
     const double *par_coord, 
     double* shape_fcn);
 
-  void point_jacobian(
-      const double *elemNodalCoords,
-      const double *shapeDerivs,
-      double *jacobian);
+  void area_vector(
+    const double *elemNodalCoords,
+    const double *shapeDeriv,
+    double *normalVec);
 
   void point_shape_deriv(
-     const double *isoParCoords,
-     double *deriv);
-
-  double contour_length_fixed_t(
-      const double *coords,
-      double sBegin,
-      double sEnd,
-      double tValue);
-
-  double contour_length_fixed_s(
-    const double *coords,
-    double tBegin,
-    double tEnd,
-    double sValue);
+    const double *isoParCoords,
+    const Jacobian::Direction direction,
+    double *deriv);
 
 private:
 
   struct ContourData {
-    int direction;
+    Jacobian::Direction direction;
     double weight;
   };
 
@@ -1024,7 +1014,7 @@ public:
     double *areav,
     double * error );
 
-  void normal_vector(
+  void area_vector(
     const double *coords,
     const double s,
     double *normalVec);

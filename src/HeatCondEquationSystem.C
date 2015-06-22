@@ -912,6 +912,7 @@ HeatCondEquationSystem::solve_and_update()
     timeB = stk::cpu_time();
     timerMisc_ += (timeB-timeA);
   }
+  
   compute_norm();
 }
 
@@ -921,7 +922,7 @@ HeatCondEquationSystem::solve_and_update()
 void
 HeatCondEquationSystem::compute_norm()
 {
-  const bool doIt = false;
+  const bool doIt = true;
   if ( !doIt )
     return;
 
@@ -935,19 +936,23 @@ HeatCondEquationSystem::compute_norm()
   const double pi_ = std::acos(-1.0);
 
   // size and initialize norm-related quantities
-  double l_oo = -1.0e16;
-  double l_norm[2] = {0.0, 0.0};
+  double l_LooNorm[3] = {-1.0e16, -1.0e16, -1.0e16};
+  double l_L1norm[3] = {0.0, 0.0, 0.0};
+  double l_L2norm[3] = {0.0, 0.0, 0.0};
   size_t l_nodeCount = 0;
 
-  stk::mesh::Selector s_all_nodes
-    = metaData.locally_owned_part() &stk::mesh::selectField(*temperature_);
+  stk::mesh::Selector s_all_non_bc_nodes
+    = metaData.locally_owned_part() 
+    & stk::mesh::selectField(*temperature_)
+    & !stk::mesh::selectUnion(realm_.bcPartVec_);
 
-  stk::mesh::BucketVector const& node_buckets = bulkData.get_buckets( stk::topology::NODE_RANK, s_all_nodes );
+  stk::mesh::BucketVector const& node_buckets = bulkData.get_buckets( stk::topology::NODE_RANK, s_all_non_bc_nodes );
   for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
         ib != node_buckets.end() ; ++ib ) {
     stk::mesh::Bucket & b = **ib ;
     const stk::mesh::Bucket::size_type length   = b.size();
     const double * temp = stk::mesh::field_data(*temperature_, b);
+    const double *dtdx = stk::mesh::field_data(*dtdx_, b);
     const double * coords = stk::mesh::field_data(*coordinates_, b);
     for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
       // increment node count
@@ -958,27 +963,49 @@ HeatCondEquationSystem::compute_norm()
       const double y = coords[nDim*k+1];
       const double analytical = k_/4.0*(cos(2.*a_*pi_*x) + cos(2.*a_*pi_*y));
       const double diff = std::abs(analytical - temp[k]);
+      
+      const double analyticalDx = -k_*a_*pi_/2.0*sin(2.0*a_*pi_*x);
+      const double analyticalDy = -k_*a_*pi_/2.0*sin(2.0*a_*pi_*y);
+      const double diffDx = std::abs(analyticalDx - dtdx[k*nDim+0]);
+      const double diffDy = std::abs(analyticalDy - dtdx[k*nDim+1]);
+
       // norms...
-      l_oo = std::max(diff, l_oo);
-      l_norm[0] += diff;
-      l_norm[1] += diff*diff;
+      l_LooNorm[0] = std::max(diff, l_LooNorm[0]);
+      l_LooNorm[1] = std::max(diffDx, l_LooNorm[1]);
+      l_LooNorm[2] = std::max(diffDy, l_LooNorm[2]);
+
+      l_L1norm[0] += diff;
+      l_L1norm[1] += diffDx;
+      l_L1norm[2] += diffDy;
+
+      l_L2norm[0] += diff*diff;
+      l_L2norm[1] += diffDx*diffDx;
+      l_L2norm[2] += diffDy*diffDy;
     }
   }
 
-  double g_l_oo = 0.0;
-  double g_norm[2] = {0.0,0.0};
+  double g_LooNorm[3] = {0.0,0.0,0.0};
+  double g_L1norm[3] = {0.0,0.0};
+  double g_L2norm[3] = {0.0,0.0};
   size_t g_nodeCount = 0;
 
   stk::ParallelMachine comm = NaluEnv::self().parallel_comm();
 
   stk::all_reduce_sum(comm, &l_nodeCount, &g_nodeCount, 1);
-  stk::all_reduce_max(comm, &l_oo, &g_l_oo, 1);
-  stk::all_reduce_sum(comm, l_norm, g_norm, 2);
+  stk::all_reduce_max(comm, l_LooNorm, g_LooNorm, 3);
+  stk::all_reduce_sum(comm, l_L1norm, g_L1norm, 3);
+  stk::all_reduce_sum(comm, l_L2norm, g_L2norm, 3);
   
   NaluEnv::self().naluOutputP0() << "Norm Summary: Node Count: " << g_nodeCount << std::endl;
-  NaluEnv::self().naluOutputP0() << "Loo: " << g_l_oo << std::endl;
-  NaluEnv::self().naluOutputP0() << "L1:  " << g_norm[0]/g_nodeCount << std::endl;
-  NaluEnv::self().naluOutputP0() << "L2:  " << std::sqrt(g_norm[1])/std::sqrt(g_nodeCount) << std::endl;
+  NaluEnv::self().naluOutputP0() << "Loo: " << g_LooNorm[0] << " " << g_LooNorm[1] << " " << g_LooNorm[2] << std::endl;
+  NaluEnv::self().naluOutputP0() << "L1:  " << g_L1norm[0]/g_nodeCount 
+                                 << " " << g_L1norm[1]/g_nodeCount
+                                 << " " << g_L1norm[2]/g_nodeCount << std::endl;
+  NaluEnv::self().naluOutputP0() << "L2:  " << std::sqrt(g_L2norm[0])/std::sqrt(g_nodeCount) 
+                                 << " " << std::sqrt(g_L2norm[1])/std::sqrt(g_nodeCount)
+                                 << " " << std::sqrt(g_L2norm[2])/std::sqrt(g_nodeCount) << std::endl;
+
+  // what about an integrated norm?
 }
 
 //--------------------------------------------------------------------------
