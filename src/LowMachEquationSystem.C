@@ -77,6 +77,7 @@
 #include <MomentumGclSrcNodeSuppAlg.h>
 #include <MomentumMassBackwardEulerNodeSuppAlg.h>
 #include <MomentumMassBDF2NodeSuppAlg.h>
+#include <MomentumMassBDF2ElemSuppAlg.h>
 #include <NaluEnv.h>
 #include <NaluParsing.h>
 #include <PostProcessingData.h>
@@ -926,7 +927,8 @@ MomentumEquationSystem::register_interior_algorithm(
     itgu->second->partVec_.push_back(part);
   }
 
-  // solver; interior contribution (advection + diffusion)
+  // solver; interior contribution (advection + diffusion) [possible CMM]
+  bool useCMM = false;
   std::map<AlgorithmType, SolverAlgorithm *>::iterator itsi
     = solverAlgDriver_->solverAlgMap_.find(algType);
   if ( itsi == solverAlgDriver_->solverAlgMap_.end() ) {
@@ -938,6 +940,30 @@ MomentumEquationSystem::register_interior_algorithm(
       theAlg = new AssembleMomentumElemSolverAlgorithm(realm_, part, this);
     }
     solverAlgDriver_->solverAlgMap_[algType] = theAlg;
+    
+    // look for mass
+    std::map<std::string, std::vector<std::string> >::iterator isrc 
+      = realm_.solutionOptions_->elemSrcTermsMap_.find("momentum");
+    if ( isrc != realm_.solutionOptions_->elemSrcTermsMap_.end() ) {
+      std::vector<std::string> mapNameVec = isrc->second;
+      for (size_t k = 0; k < mapNameVec.size(); ++k ) {
+        std::string sourceName = mapNameVec[k];
+        if (sourceName == "momentum_time_derivative" ) {
+          useCMM = true;
+          if ( realm_.number_of_states() == 2 ) {
+            throw std::runtime_error("ElemSrcTermsError::only BBF2 CMM");
+          }
+          else {
+            MomentumMassBDF2ElemSuppAlg *theMass
+              = new MomentumMassBDF2ElemSuppAlg(realm_);
+            theAlg->supplementalAlg_.push_back(theMass);
+          } 
+        }
+        else {
+          throw std::runtime_error("ElemSrcTermsError::only support CMM");
+        }
+      }
+    }
   }
   else {
     itsi->second->partVec_.push_back(part);
@@ -950,17 +976,19 @@ MomentumEquationSystem::register_interior_algorithm(
     AssembleNodeSolverAlgorithm *theAlg
       = new AssembleNodeSolverAlgorithm(realm_, part, this);
     solverAlgDriver_->solverAlgMap_[algMass] = theAlg;
-
-    // now create the supplemental alg for mass term
-    if ( realm_.number_of_states() == 2 ) {
-      MomentumMassBackwardEulerNodeSuppAlg *theMass
-        = new MomentumMassBackwardEulerNodeSuppAlg(realm_);
-      theAlg->supplementalAlg_.push_back(theMass);
-    }
-    else {
-      MomentumMassBDF2NodeSuppAlg *theMass
-        = new MomentumMassBDF2NodeSuppAlg(realm_);
-      theAlg->supplementalAlg_.push_back(theMass);
+    
+    // now create the supplemental alg for mass term (only when CMM is not in use)
+    if ( !useCMM ) {
+      if ( realm_.number_of_states() == 2 ) {
+        MomentumMassBackwardEulerNodeSuppAlg *theMass
+          = new MomentumMassBackwardEulerNodeSuppAlg(realm_);
+        theAlg->supplementalAlg_.push_back(theMass);
+      }
+      else {
+        MomentumMassBDF2NodeSuppAlg *theMass
+          = new MomentumMassBDF2NodeSuppAlg(realm_);
+        theAlg->supplementalAlg_.push_back(theMass);
+      }
     }
 
     // Add src term supp alg...; limited number supported

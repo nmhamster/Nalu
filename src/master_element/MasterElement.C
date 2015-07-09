@@ -2754,7 +2754,7 @@ void Quad92DSCV::determinant(const int nelem, const double *coords,
   double* p_elemNodalCoords = elemNodalCoords.data();
   double* p_shapeDerivs = shapeDerivs.data();
 
-  for (size_t k = 0; k < nelem; ++k) {
+  for (int k = 0; k < nelem; ++k) {
     const size_t scalar_elem_offset = nodesPerElement_ * k;
     const size_t vector_elem_offset = nDim_ * scalar_elem_offset;
 
@@ -3081,7 +3081,7 @@ Quad92DSCS::determinant(const int nelem,
   double* p_shapeDerivs = shapeDerivs.data();
   double* p_elemNodalCoords = elemNodalCoords.data();
 
-  for (size_t k = 0; k < nelem; ++k) {
+  for (int k = 0; k < nelem; ++k) {
     const size_t elem_offset = nDim_ * nodesPerElement_ * k;
 
     //load up the element coordinates in the expected format
@@ -4697,7 +4697,7 @@ void Edge32DSCS::determinant(
   double* p_normalVec = normalVec.data();
   double* p_elemNodalCoords = elemNodalCoords.data();
 
-  for (size_t k = 0; k < nelem; ++k) {
+  for (int k = 0; k < nelem; ++k) {
     const size_t elem_offset = nDim_ * nodesPerElement_ * k;
 
     //load up the element coordinates in the expected format
