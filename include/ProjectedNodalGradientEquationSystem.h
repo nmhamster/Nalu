@@ -9,6 +9,7 @@
 #ifndef ProjectedNodalGradientEquationSystem_h
 #define ProjectedNodalGradientEquationSystem_h
 
+#include <Enums.h>
 #include <EquationSystem.h>
 #include <FieldTypeDef.h>
 #include <NaluParsing.h>
@@ -33,8 +34,18 @@ class ProjectedNodalGradientEquationSystem : public EquationSystem {
 public:
 
   ProjectedNodalGradientEquationSystem(
-    EquationSystems& equationSystems);
+    EquationSystems& equationSystems,
+    const std::string dofName, 
+    const std::string deltaName, 
+    const std::string independentDofName,
+    const std::string eqSysName);
   virtual ~ProjectedNodalGradientEquationSystem();
+
+  void set_data_map( 
+    BoundaryConditionType BC, std::string name);
+
+  std::string get_name_given_bc( 
+    BoundaryConditionType BC);
 
   void register_nodal_fields(
     stk::mesh::Part *part);
@@ -47,10 +58,31 @@ public:
     const stk::topology &theTopo,
     const WallBoundaryConditionData &wallBCData);
 
+  void register_inflow_bc(
+    stk::mesh::Part *part,
+    const stk::topology &theTopo,
+    const InflowBoundaryConditionData &inflowBCData);
+
+  void register_open_bc(
+    stk::mesh::Part *part,
+    const stk::topology &theTopo,
+    const OpenBoundaryConditionData &openBCData);
+
+  void register_symmetry_bc(
+    stk::mesh::Part *part,
+    const stk::topology &theTopo,
+    const SymmetryBoundaryConditionData &symmetryBCData);
+
   void solve_and_update();
 
   void initialize();
   void reinitialize_linear_system();
+
+  std::string dofName_;
+  std::string deltaName_;
+  std::string independentDofName_;
+  std::string eqSysName_;
+  std::map<BoundaryConditionType, std::string> dataMap_;
 
   VectorFieldType *dqdx_;
   VectorFieldType *qTmp_;  

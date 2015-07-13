@@ -37,17 +37,19 @@ namespace nalu{
 AssemblePNGElemSolverAlgorithm::AssemblePNGElemSolverAlgorithm(
   Realm &realm,
   stk::mesh::Part *part,
-  EquationSystem *eqSystem)
+  EquationSystem *eqSystem,
+  std::string independentDofName,
+  std::string dofName)
   : SolverAlgorithm(realm, part, eqSystem),
     scalarQ_(NULL),
     dqdx_(NULL),
     coordinates_(NULL),
     scVolume_(NULL)
 {
-  // save off data; hack for temperature
+  // save off data
   stk::mesh::MetaData & meta_data = realm_.meta_data();
-  scalarQ_ = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "temperature");
-  dqdx_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "dqdxCMM");
+  scalarQ_ = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, independentDofName);
+  dqdx_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, dofName);
   coordinates_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, realm_.get_coordinates_name());
   scVolume_ = meta_data.get_field<GenericFieldType>(stk::topology::ELEMENT_RANK, "sc_volume");
 }

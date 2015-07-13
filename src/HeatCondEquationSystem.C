@@ -126,8 +126,9 @@ HeatCondEquationSystem::HeatCondEquationSystem(
   realm_.equationSystems_.push_back(this);
 
   // create projected nodal gradient equation system
-  if ( managePNG_ )
-    projectedNodalGradEqs_ = new ProjectedNodalGradientEquationSystem(eqSystems);
+  if ( managePNG_ ) {
+    manage_png(eqSystems);
+  }
 }
 
 //--------------------------------------------------------------------------
@@ -136,6 +137,19 @@ HeatCondEquationSystem::HeatCondEquationSystem(
 HeatCondEquationSystem::~HeatCondEquationSystem()
 {
   delete assembleNodalGradAlgDriver_;
+}
+
+//--------------------------------------------------------------------------
+//-------- manage_png ------------------------------------------------------
+//--------------------------------------------------------------------------
+void
+HeatCondEquationSystem::manage_png(
+  EquationSystems& eqSystems)
+{
+  projectedNodalGradEqs_ 
+    = new ProjectedNodalGradientEquationSystem(eqSystems, "dqdxCMM", "qTmp", "temperature", "PNGGradEQS");
+  // fill the map; only require wall (which is the same name)...
+  projectedNodalGradEqs_->set_data_map(WALL_BC, "temperature");
 }
 
 //--------------------------------------------------------------------------
@@ -893,7 +907,6 @@ void
 HeatCondEquationSystem::solve_and_update()
 {
   // initialize fields
-
   if ( isInit_ ) {
     assembleNodalGradAlgDriver_->execute();
     solve_and_update_png();

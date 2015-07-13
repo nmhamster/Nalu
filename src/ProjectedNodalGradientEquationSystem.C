@@ -62,15 +62,23 @@ namespace nalu{
 //-------- constructor -----------------------------------------------------
 //--------------------------------------------------------------------------
 ProjectedNodalGradientEquationSystem::ProjectedNodalGradientEquationSystem(
-  EquationSystems& eqSystems)
-  : EquationSystem(eqSystems, "PNGradEQS"),
+ EquationSystems& eqSystems,
+ const std::string dofName, 
+ const std::string deltaName, 
+ const std::string independentDofName,
+ const std::string eqSysName)
+  : EquationSystem(eqSystems, eqSysName),
+    dofName_(dofName),
+    deltaName_(deltaName),
+    independentDofName_(independentDofName),
+    eqSysName_(eqSysName),
     dqdx_(NULL),
     qTmp_(NULL)
 {
   // extract solver name and solver object
-  std::string solverName = realm_.equationSystems_.get_solver_block_name("temperature");
+  std::string solverName = realm_.equationSystems_.get_solver_block_name(dofName);
   LinearSolver *solver = realm_.root()->linearSolvers_->create_solver(solverName, EQ_PNG);
-  linsys_ = LinearSystem::create(realm_, realm_.spatialDimension_, "PNGradEQS", solver);
+  linsys_ = LinearSystem::create(realm_, realm_.spatialDimension_, eqSysName_, solver);
 
   // push back EQ to manager
   realm_.equationSystems_.push_back(this);
@@ -81,7 +89,32 @@ ProjectedNodalGradientEquationSystem::ProjectedNodalGradientEquationSystem(
 //--------------------------------------------------------------------------
 ProjectedNodalGradientEquationSystem::~ProjectedNodalGradientEquationSystem()
 {
-  // nothing
+  // nothing to do
+}
+
+//--------------------------------------------------------------------------
+//-------- set_data_map ----------------------------------------------------
+//--------------------------------------------------------------------------
+void
+ProjectedNodalGradientEquationSystem::set_data_map( 
+  BoundaryConditionType BC, std::string name)
+{
+  dataMap_[BC] = name;
+}
+
+//--------------------------------------------------------------------------
+//-------- get_name_given_bc -----------------------------------------------
+//--------------------------------------------------------------------------
+std::string
+ProjectedNodalGradientEquationSystem::get_name_given_bc( 
+  BoundaryConditionType BC)
+{
+  std::map<BoundaryConditionType, std::string>::iterator it;
+  it=dataMap_.find(BC);
+  if ( it == dataMap_.end() )
+    throw std::runtime_error("PNGEqSys::missing BC type specification (developer error)!");
+  else
+    return it->second;
 }
 
 //--------------------------------------------------------------------------
@@ -95,11 +128,11 @@ ProjectedNodalGradientEquationSystem::register_nodal_fields(
 
   const int nDim = meta_data.spatial_dimension();
 
-  dqdx_ =  &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "dqdxCMM"));
+  dqdx_ =  &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, dofName_));
   stk::mesh::put_field(*dqdx_, *part, nDim);
 
   // delta solution for linear solver
-  qTmp_ =  &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "qTmp"));
+  qTmp_ =  &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, deltaName_));
   stk::mesh::put_field(*qTmp_, *part, nDim);
 }
 
@@ -118,7 +151,7 @@ ProjectedNodalGradientEquationSystem::register_interior_algorithm(
     = solverAlgDriver_->solverAlgMap_.find(algType);
   if ( its == solverAlgDriver_->solverAlgMap_.end() ) {
     AssemblePNGElemSolverAlgorithm *theAlg
-      = new AssemblePNGElemSolverAlgorithm(realm_, part, this);
+      = new AssemblePNGElemSolverAlgorithm(realm_, part, this, independentDofName_, dofName_);
     solverAlgDriver_->solverAlgMap_[algType] = theAlg;
   }
   else {
@@ -133,17 +166,100 @@ void
 ProjectedNodalGradientEquationSystem::register_wall_bc(
   stk::mesh::Part *part,
   const stk::topology &/*theTopo*/,
-  const WallBoundaryConditionData &wallBCData)
+  const WallBoundaryConditionData &/*wallBCData*/)
 {
 
   const AlgorithmType algType = WALL;
 
-  // create lhs/rhs algorithm; generalized for edge (nearest node usage) and element
+  // extract the field name for this bc type
+  std::string fieldName = get_name_given_bc(WALL_BC);
+  // create lhs/rhs algorithm;
   std::map<AlgorithmType, SolverAlgorithm *>::iterator its =
     solverAlgDriver_->solverAlgMap_.find(algType);
   if ( its == solverAlgDriver_->solverAlgMap_.end() ) {
     AssemblePNGBoundarySolverAlgorithm *theAlg
-      = new AssemblePNGBoundarySolverAlgorithm(realm_, part, this);
+      = new AssemblePNGBoundarySolverAlgorithm(realm_, part, this, fieldName);
+    solverAlgDriver_->solverAlgMap_[algType] = theAlg;
+  }
+  else {
+    its->second->partVec_.push_back(part);
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- register_inflow_bc ----------------------------------------------
+//--------------------------------------------------------------------------
+void
+ProjectedNodalGradientEquationSystem::register_inflow_bc(
+  stk::mesh::Part *part,
+  const stk::topology &/*theTopo*/,
+  const InflowBoundaryConditionData &/*inflowBCData*/)
+{
+
+  const AlgorithmType algType = INFLOW;
+
+  // extract the field name for this bc type
+  std::string fieldName = get_name_given_bc(INFLOW_BC);
+  // create lhs/rhs algorithm;
+  std::map<AlgorithmType, SolverAlgorithm *>::iterator its =
+    solverAlgDriver_->solverAlgMap_.find(algType);
+  if ( its == solverAlgDriver_->solverAlgMap_.end() ) {
+    AssemblePNGBoundarySolverAlgorithm *theAlg
+      = new AssemblePNGBoundarySolverAlgorithm(realm_, part, this, fieldName);
+    solverAlgDriver_->solverAlgMap_[algType] = theAlg;
+  }
+  else {
+    its->second->partVec_.push_back(part);
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- register_open_bc ------------------------------------------------
+//--------------------------------------------------------------------------
+void
+ProjectedNodalGradientEquationSystem::register_open_bc(
+  stk::mesh::Part *part,
+  const stk::topology &/*theTopo*/,
+  const OpenBoundaryConditionData &/*openBCData*/)
+{
+
+  const AlgorithmType algType = OPEN;
+
+  // extract the field name for this bc type
+  std::string fieldName = get_name_given_bc(OPEN_BC);
+  // create lhs/rhs algorithm;
+  std::map<AlgorithmType, SolverAlgorithm *>::iterator its =
+    solverAlgDriver_->solverAlgMap_.find(algType);
+  if ( its == solverAlgDriver_->solverAlgMap_.end() ) {
+    AssemblePNGBoundarySolverAlgorithm *theAlg
+      = new AssemblePNGBoundarySolverAlgorithm(realm_, part, this, fieldName);
+    solverAlgDriver_->solverAlgMap_[algType] = theAlg;
+  }
+  else {
+    its->second->partVec_.push_back(part);
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- register_symmetry_bc --------------------------------------------
+//--------------------------------------------------------------------------
+void
+ProjectedNodalGradientEquationSystem::register_symmetry_bc(
+  stk::mesh::Part *part,
+  const stk::topology &/*theTopo*/,
+  const SymmetryBoundaryConditionData &/*symmetryBCData*/)
+{
+
+  const AlgorithmType algType = SYMMETRY;
+
+  // extract the field name for this bc type
+  std::string fieldName = get_name_given_bc(SYMMETRY_BC);
+  // create lhs/rhs algorithm;
+  std::map<AlgorithmType, SolverAlgorithm *>::iterator its =
+    solverAlgDriver_->solverAlgMap_.find(algType);
+  if ( its == solverAlgDriver_->solverAlgMap_.end() ) {
+    AssemblePNGBoundarySolverAlgorithm *theAlg
+      = new AssemblePNGBoundarySolverAlgorithm(realm_, part, this, fieldName);
     solverAlgDriver_->solverAlgMap_[algType] = theAlg;
   }
   else {
@@ -182,9 +298,9 @@ ProjectedNodalGradientEquationSystem::reinitialize_linear_system()
   }
 
   // create new solver
-  std::string solverName = realm_.equationSystems_.get_solver_block_name("temperature");
+  std::string solverName = realm_.equationSystems_.get_solver_block_name(dofName_);
   LinearSolver *solver = realm_.root()->linearSolvers_->create_solver(solverName, EQ_PNG);
-  linsys_ = LinearSystem::create(realm_, 1, "PNGradEQS", solver);
+  linsys_ = LinearSystem::create(realm_, 1, eqSysName_, solver);
 
   // initialize
   solverAlgDriver_->initialize_connectivity();

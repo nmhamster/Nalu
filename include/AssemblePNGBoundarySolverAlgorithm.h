@@ -30,7 +30,8 @@ public:
   AssemblePNGBoundarySolverAlgorithm(
     Realm &realm,
     stk::mesh::Part *part,
-    EquationSystem *eqSystem);
+    EquationSystem *eqSystem,
+    std::string independentDofName);
   virtual ~AssemblePNGBoundarySolverAlgorithm() {}
   virtual void initialize_connectivity();
   virtual void execute();

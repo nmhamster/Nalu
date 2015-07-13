@@ -38,14 +38,15 @@ namespace nalu{
 AssemblePNGBoundarySolverAlgorithm::AssemblePNGBoundarySolverAlgorithm(
   Realm &realm,
   stk::mesh::Part *part,
-  EquationSystem *eqSystem)
+  EquationSystem *eqSystem,
+  std::string independentDofName)
   : SolverAlgorithm(realm, part, eqSystem),
     scalarQ_(NULL),
     exposedAreaVec_(NULL)
 {
-  // save off fields; hack for temperature - could be generalized 
+  // save off fields 
   stk::mesh::MetaData & meta_data = realm_.meta_data();
-  scalarQ_ = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "temperature");
+  scalarQ_ = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, independentDofName);
   exposedAreaVec_ = meta_data.get_field<GenericFieldType>(meta_data.side_rank(), "exposed_area_vector");
 }
 

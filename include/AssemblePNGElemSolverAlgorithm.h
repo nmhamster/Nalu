@@ -30,7 +30,9 @@ public:
   AssemblePNGElemSolverAlgorithm(
     Realm &realm,
     stk::mesh::Part *part,
-    EquationSystem *eqSystem);
+    EquationSystem *eqSystem,
+    std::string independentDofName,
+    std::string dofName);
   virtual ~AssemblePNGElemSolverAlgorithm() {}
   virtual void initialize_connectivity();
   virtual void execute();
