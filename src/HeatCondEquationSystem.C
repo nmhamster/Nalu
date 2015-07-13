@@ -950,7 +950,7 @@ void
 HeatCondEquationSystem::solve_and_update_png()
 {
   if ( NULL != projectedNodalGradEqs_ ) {
-    projectedNodalGradEqs_->solve_and_update();
+    projectedNodalGradEqs_->solve_and_update_external();
   }
 }
 

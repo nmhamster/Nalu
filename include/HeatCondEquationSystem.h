@@ -39,7 +39,7 @@ public:
   virtual ~HeatCondEquationSystem();
 
   void manage_png(
-    EquationSystems& equationSystems);
+    EquationSystems& eqSystems);
 
   void register_nodal_fields(
     stk::mesh::Part *part);

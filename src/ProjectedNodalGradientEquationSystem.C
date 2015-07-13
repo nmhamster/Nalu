@@ -66,12 +66,14 @@ ProjectedNodalGradientEquationSystem::ProjectedNodalGradientEquationSystem(
  const std::string dofName, 
  const std::string deltaName, 
  const std::string independentDofName,
- const std::string eqSysName)
+ const std::string eqSysName,
+ const bool managesSolve)
   : EquationSystem(eqSystems, eqSysName),
     dofName_(dofName),
     deltaName_(deltaName),
     independentDofName_(independentDofName),
     eqSysName_(eqSysName),
+    managesSolve_(managesSolve),
     dqdx_(NULL),
     qTmp_(NULL)
 {
@@ -313,6 +315,16 @@ ProjectedNodalGradientEquationSystem::reinitialize_linear_system()
 void
 ProjectedNodalGradientEquationSystem::solve_and_update()
 {
+  if ( managesSolve_ )
+    solve_and_update_external();
+}
+
+//--------------------------------------------------------------------------
+//-------- solve_and_update_external ------------------------------------------------
+//--------------------------------------------------------------------------
+void
+ProjectedNodalGradientEquationSystem::solve_and_update_external()
+{
   maxIterations_ = 1;
   for ( int k = 0; k < maxIterations_; ++k ) {
 
@@ -333,9 +345,7 @@ ProjectedNodalGradientEquationSystem::solve_and_update()
     double timeB = stk::cpu_time();
     timerAssemble_ += (timeB-timeA);   
   }
-  
 }
-
 
 } // namespace nalu
 } // namespace Sierra

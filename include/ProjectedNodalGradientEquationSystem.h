@@ -38,7 +38,8 @@ public:
     const std::string dofName, 
     const std::string deltaName, 
     const std::string independentDofName,
-    const std::string eqSysName);
+    const std::string eqSysName,
+    const bool managesSolve = false);
   virtual ~ProjectedNodalGradientEquationSystem();
 
   void set_data_map( 
@@ -73,17 +74,28 @@ public:
     const stk::topology &theTopo,
     const SymmetryBoundaryConditionData &symmetryBCData);
 
+  // internal solve and update from EquationSystems
   void solve_and_update();
+
+  // external intended to be called by another EqSystem (used when someone manages PNGEqs)
+  void solve_and_update_external();
 
   void initialize();
   void reinitialize_linear_system();
 
+  // names that customize this PNG system
   std::string dofName_;
   std::string deltaName_;
   std::string independentDofName_;
   std::string eqSysName_;
+
+  // who manages the solve? Often times, this is created by another EqSys
+  const bool managesSolve_;
+
+  // for exach equation, boundary data may be different
   std::map<BoundaryConditionType, std::string> dataMap_;
 
+  // internal fields
   VectorFieldType *dqdx_;
   VectorFieldType *qTmp_;  
 };
