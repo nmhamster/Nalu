@@ -42,6 +42,7 @@
 #include <Realms.h>
 #include <HeatCondMassBackwardEulerNodeSuppAlg.h>
 #include <HeatCondMassBDF2NodeSuppAlg.h>
+#include <ProjectedNodalGradientEquationSystem.h>
 #include <PstabErrorIndicatorEdgeAlgorithm.h>
 #include <PstabErrorIndicatorElemAlgorithm.h>
 #include <SimpleErrorIndicatorScalarElemAlgorithm.h>
@@ -90,8 +91,10 @@ namespace nalu{
 //-------- constructor -----------------------------------------------------
 //--------------------------------------------------------------------------
 HeatCondEquationSystem::HeatCondEquationSystem(
-  EquationSystems& eqSystems)
+  EquationSystems& eqSystems,
+  const bool managePNG)
   : EquationSystem(eqSystems, "HeatCondEQS"),
+    managePNG_(managePNG),
     temperature_(NULL),
     dtdx_(NULL),
     tTmp_(NULL),
@@ -107,7 +110,8 @@ HeatCondEquationSystem::HeatCondEquationSystem(
     edgeAreaVec_(NULL),
     assembleNodalGradAlgDriver_(new AssembleNodalGradAlgorithmDriver(realm_, "temperature", "dtdx")),
     isInit_(true),
-    collocationForViscousTerms_(false)
+    collocationForViscousTerms_(false),
+    projectedNodalGradEqs_(NULL)
 {
   // extract solver name and solver object
   std::string solverName = realm_.equationSystems_.get_solver_block_name("temperature");
@@ -120,6 +124,10 @@ HeatCondEquationSystem::HeatCondEquationSystem(
 
   // push back EQ to manager
   realm_.equationSystems_.push_back(this);
+
+  // create projected nodal gradient equation system
+  if ( managePNG_ )
+    projectedNodalGradEqs_ = new ProjectedNodalGradientEquationSystem(eqSystems);
 }
 
 //--------------------------------------------------------------------------
@@ -189,6 +197,10 @@ HeatCondEquationSystem::register_nodal_fields(
 
     copyStateAlg_.push_back(theCopyAlgA);
   }
+
+  // WIP; register dqdxCMM for norm calculation
+  VectorFieldType *dqdxCMM = &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "dqdxCMM"));
+  stk::mesh::put_field(*dqdxCMM, *part, nDim);
 }
 
 //--------------------------------------------------------------------------
@@ -884,6 +896,7 @@ HeatCondEquationSystem::solve_and_update()
 
   if ( isInit_ ) {
     assembleNodalGradAlgDriver_->execute();
+    solve_and_update_png();
     isInit_ = false;
   }
 
@@ -909,11 +922,23 @@ HeatCondEquationSystem::solve_and_update()
     // projected nodal gradient
     timeA = stk::cpu_time();
     assembleNodalGradAlgDriver_->execute();
+    solve_and_update_png();
     timeB = stk::cpu_time();
     timerMisc_ += (timeB-timeA);
   }
   
   compute_norm();
+}
+
+//--------------------------------------------------------------------------
+//-------- solve_and_update_png --------------------------------------------
+//--------------------------------------------------------------------------
+void
+HeatCondEquationSystem::solve_and_update_png()
+{
+  if ( NULL != projectedNodalGradEqs_ ) {
+    projectedNodalGradEqs_->solve_and_update();
+  }
 }
 
 //--------------------------------------------------------------------------
@@ -929,6 +954,9 @@ HeatCondEquationSystem::compute_norm()
   stk::mesh::MetaData &metaData = realm_.meta_data();
   stk::mesh::BulkData &bulkData = realm_.bulk_data();
 
+  // extract a field
+  VectorFieldType *dqdxCMM_ =  metaData.get_field<VectorFieldType>(stk::topology::NODE_RANK, "dqdxCMM");
+
   // save params
   const int nDim = metaData.spatial_dimension();
   const double a_ = 1.0;
@@ -936,9 +964,9 @@ HeatCondEquationSystem::compute_norm()
   const double pi_ = std::acos(-1.0);
 
   // size and initialize norm-related quantities
-  double l_LooNorm[3] = {-1.0e16, -1.0e16, -1.0e16};
-  double l_L1norm[3] = {0.0, 0.0, 0.0};
-  double l_L2norm[3] = {0.0, 0.0, 0.0};
+  double l_LooNorm[5] = {-1.0e16, -1.0e16, -1.0e16, -1.0e16, -1.0e16};
+  double l_L1norm[5] = {};
+  double l_L2norm[5] = {};
   size_t l_nodeCount = 0;
 
   stk::mesh::Selector s_all_non_bc_nodes
@@ -953,6 +981,7 @@ HeatCondEquationSystem::compute_norm()
     const stk::mesh::Bucket::size_type length   = b.size();
     const double * temp = stk::mesh::field_data(*temperature_, b);
     const double *dtdx = stk::mesh::field_data(*dtdx_, b);
+    const double *dqdxCMM = stk::mesh::field_data(*dqdxCMM_, b);
     const double * coords = stk::mesh::field_data(*coordinates_, b);
     for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
       // increment node count
@@ -968,43 +997,56 @@ HeatCondEquationSystem::compute_norm()
       const double analyticalDy = -k_*a_*pi_/2.0*sin(2.0*a_*pi_*y);
       const double diffDx = std::abs(analyticalDx - dtdx[k*nDim+0]);
       const double diffDy = std::abs(analyticalDy - dtdx[k*nDim+1]);
+      const double diffDxCMM = std::abs(analyticalDx - dqdxCMM[k*nDim+0]);
+      const double diffDyCMM = std::abs(analyticalDy - dqdxCMM[k*nDim+1]);
 
       // norms...
       l_LooNorm[0] = std::max(diff, l_LooNorm[0]);
       l_LooNorm[1] = std::max(diffDx, l_LooNorm[1]);
       l_LooNorm[2] = std::max(diffDy, l_LooNorm[2]);
+      l_LooNorm[3] = std::max(diffDxCMM, l_LooNorm[3]);
+      l_LooNorm[4] = std::max(diffDyCMM, l_LooNorm[4]);
 
       l_L1norm[0] += diff;
       l_L1norm[1] += diffDx;
       l_L1norm[2] += diffDy;
+      l_L1norm[3] += diffDxCMM;
+      l_L1norm[4] += diffDyCMM;
 
       l_L2norm[0] += diff*diff;
       l_L2norm[1] += diffDx*diffDx;
       l_L2norm[2] += diffDy*diffDy;
+      l_L2norm[3] += diffDxCMM*diffDxCMM;
+      l_L2norm[4] += diffDyCMM*diffDyCMM;
     }
   }
 
-  double g_LooNorm[3] = {0.0,0.0,0.0};
-  double g_L1norm[3] = {0.0,0.0};
-  double g_L2norm[3] = {0.0,0.0};
+  double g_LooNorm[5] = {};
+  double g_L1norm[5] = {};
+  double g_L2norm[5] = {};
   size_t g_nodeCount = 0;
 
   stk::ParallelMachine comm = NaluEnv::self().parallel_comm();
 
   stk::all_reduce_sum(comm, &l_nodeCount, &g_nodeCount, 1);
-  stk::all_reduce_max(comm, l_LooNorm, g_LooNorm, 3);
-  stk::all_reduce_sum(comm, l_L1norm, g_L1norm, 3);
-  stk::all_reduce_sum(comm, l_L2norm, g_L2norm, 3);
+  stk::all_reduce_max(comm, l_LooNorm, g_LooNorm, 5);
+  stk::all_reduce_sum(comm, l_L1norm, g_L1norm, 5);
+  stk::all_reduce_sum(comm, l_L2norm, g_L2norm, 5);
   
   NaluEnv::self().naluOutputP0() << "Norm Summary: Node Count: " << g_nodeCount << std::endl;
-  NaluEnv::self().naluOutputP0() << "Loo: " << g_LooNorm[0] << " " << g_LooNorm[1] << " " << g_LooNorm[2] << std::endl;
+  NaluEnv::self().naluOutputP0() << "Loo: " << g_LooNorm[0] << " " << g_LooNorm[1] << " " << g_LooNorm[2] 
+                                     << " " << g_LooNorm[3] << " " << g_LooNorm[4] << std::endl;
   NaluEnv::self().naluOutputP0() << "L1:  " << g_L1norm[0]/g_nodeCount 
                                  << " " << g_L1norm[1]/g_nodeCount
-                                 << " " << g_L1norm[2]/g_nodeCount << std::endl;
+                                 << " " << g_L1norm[2]/g_nodeCount 
+                                 << " " << g_L1norm[3]/g_nodeCount
+                                 << " " << g_L1norm[4]/g_nodeCount << std::endl;
   NaluEnv::self().naluOutputP0() << "L2:  " << std::sqrt(g_L2norm[0])/std::sqrt(g_nodeCount) 
                                  << " " << std::sqrt(g_L2norm[1])/std::sqrt(g_nodeCount)
-                                 << " " << std::sqrt(g_L2norm[2])/std::sqrt(g_nodeCount) << std::endl;
-
+                                 << " " << std::sqrt(g_L2norm[2])/std::sqrt(g_nodeCount)
+                                 << " " << std::sqrt(g_L2norm[3])/std::sqrt(g_nodeCount) 
+                                 << " " << std::sqrt(g_L2norm[4])/std::sqrt(g_nodeCount) << std::endl;
+  
   // what about an integrated norm?
 }
 

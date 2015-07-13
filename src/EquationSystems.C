@@ -122,7 +122,9 @@ void EquationSystems::load(const YAML::Node & y_node)
         }
         else if( (y_eqsys = expect_map(y_system, "HeatConduction", true)) ) {
           if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = HeatConduction " << std::endl;
-          eqSys = new HeatCondEquationSystem(*this);
+          bool managePNG = false;
+          get_if_present_no_default(*y_eqsys, "manage_png", managePNG);
+          eqSys = new HeatCondEquationSystem(*this, managePNG);
         }
         else if( (y_eqsys = expect_map(y_system, "RadiativeTransport", true)) ) {
           if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = RadiativeTransport " << std::endl;

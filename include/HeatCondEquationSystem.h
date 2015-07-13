@@ -27,13 +27,15 @@ class Realm;
 class AssembleNodalGradAlgorithmDriver;
 class AlgorithmDriver;
 class EquationSystems;
+class ProjectedNodalGradientEquationSystem;
 
 class HeatCondEquationSystem : public EquationSystem {
 
 public:
 
   HeatCondEquationSystem(
-    EquationSystems& equationSystems);
+    EquationSystems& equationSystems,
+    const bool managePNG);
   virtual ~HeatCondEquationSystem();
 
   void register_nodal_fields(
@@ -69,6 +71,7 @@ public:
       const std::map<std::string, std::vector<double> > &theParams);
 
   void solve_and_update();
+  void solve_and_update_png();
   void compute_norm();
 
   void initialize();
@@ -81,6 +84,9 @@ public:
     EquationSystem::load(node);
     get_if_present(node, "use_collocation", collocationForViscousTerms_, false);
   }
+  
+  // allow equation system to manage a projected nodal gradient
+  const bool managePNG_;
 
   ScalarFieldType *temperature_;
   VectorFieldType *dtdx_;
@@ -101,7 +107,7 @@ public:
   AssembleNodalGradAlgorithmDriver *assembleNodalGradAlgDriver_;
   bool isInit_;
   bool collocationForViscousTerms_;
-  
+  ProjectedNodalGradientEquationSystem *projectedNodalGradEqs_;
 };
 
 } // namespace nalu
