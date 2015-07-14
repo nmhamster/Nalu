@@ -29,6 +29,7 @@ class ContinuityEquationSystem;
 class LinearSystem;
 class ProjectedNodalGradientEquationSystem;
 class SurfaceForceAndMomentAlgorithmDriver;
+class VelocityCorrectionEquationSystem;
 
 class LowMachEquationSystem : public EquationSystem {
 
@@ -37,7 +38,8 @@ public:
   LowMachEquationSystem (
     EquationSystems& equationSystems,
     const bool elementContinuityEqs,
-    const bool managePNG = false);
+    const bool managePNG = false,
+    const bool manageUcorr = false);
   virtual ~LowMachEquationSystem();
   
   virtual void initialize();
@@ -99,7 +101,8 @@ class MomentumEquationSystem : public EquationSystem {
 public:
 
   MomentumEquationSystem(
-    EquationSystems& equationSystems);
+    EquationSystems& equationSystems,
+    const bool manageUcorr);
   virtual ~MomentumEquationSystem();
 
   virtual void initial_work();
@@ -152,8 +155,13 @@ public:
   virtual void predict_state();
 
   void compute_wall_function_params();
+  void compute_u_correction();
+
+  // allow for consistent mass matrix approach
+  const bool manageUcorr_;
 
   VectorFieldType *velocity_;
+  VectorFieldType *provisionalVelocity_;
   GenericFieldType *dudx_;
 
   VectorFieldType *coordinates_;
@@ -168,6 +176,8 @@ public:
   AlgorithmDriver *tviscAlgDriver_;
   AlgorithmDriver *cflReyAlgDriver_;
   AlgorithmDriver *wallFunctionParamsAlgDriver_;
+
+  VelocityCorrectionEquationSystem *uCorrEqs_;
 
   // saved of mesh parts that are not to be projected
   std::vector<stk::mesh::Part *> notProjectedPart_;
@@ -248,8 +258,8 @@ public:
 
   AssembleNodalGradAlgorithmDriver *assembleNodalGradAlgDriver_;
   AlgorithmDriver *computeMdotAlgDriver_;
-  ProjectedNodalGradientEquationSystem *projectedNodalGradEqs_;
-};
+  ProjectedNodalGradientEquationSystem *projectedNodalGradEqs_;}
+;
 
 } // namespace nalu
 } // namespace Sierra

@@ -98,6 +98,7 @@
 #include <TurbViscSmagorinskyAlgorithm.h>
 #include <TurbViscSSTAlgorithm.h>
 #include <TurbViscWaleAlgorithm.h>
+#include <VelocityCorrectionEquationSystem.h>
 
 // stk_util
 #include <stk_util/parallel/Parallel.hpp>
@@ -137,7 +138,8 @@ namespace nalu{
 LowMachEquationSystem::LowMachEquationSystem(
   EquationSystems& eqSystems,
   const bool elementContinuityEqs,
-  const bool managePNG)
+  const bool managePNG,
+  const bool manageUcorr)
   : EquationSystem(eqSystems, "LowMachEOSWrap"),
     elementContinuityEqs_(elementContinuityEqs),
     density_(NULL),
@@ -152,22 +154,9 @@ LowMachEquationSystem::LowMachEquationSystem(
   realm_.equationSystems_.push_back(this);
 
   // create momentum and pressure
-  momentumEqSys_= new MomentumEquationSystem(eqSystems);
+  momentumEqSys_= new MomentumEquationSystem(eqSystems, manageUcorr);
   continuityEqSys_ = new ContinuityEquationSystem(eqSystems, elementContinuityEqs_, managePNG);
 }
-
-#if 0
-void  LowMachEquationSystem::breadboard()
-{
-  // push back EQ to manager
-  realm.equationSystems_.push_back(this);
-
-  // create momentum and pressure
-  momentumEqSys_= new MomentumEquationSystem(realm);
-  continuityEqSys_ = new ContinuityEquationSystem(realm, elementContinuityEqs_);
-
-}
-#endif
 
 //--------------------------------------------------------------------------
 //-------- destructor ------------------------------------------------------
@@ -663,26 +652,51 @@ LowMachEquationSystem::project_nodal_velocity()
   VectorFieldType *dpdx = continuityEqSys_->dpdx_;
   ScalarFieldType &densityNp1 = density_->field_of_state(stk::mesh::StateNP1);
 
-  // selector and node_buckets
-  stk::mesh::Selector s_projected_nodes
-    = !stk::mesh::selectUnion(momentumEqSys_->notProjectedPart_) &
-    stk::mesh::selectField(*dpdx);
+  //==========================================================
+  // save off dpdx to uTmp (do it everywhere)
+  //==========================================================
+ 
+  // selector (everywhere dpdx lives) and node_buckets 
+  stk::mesh::Selector s_nodes = stk::mesh::selectField(*dpdx);
   stk::mesh::BucketVector const& node_buckets =
-    realm_.get_buckets( stk::topology::NODE_RANK, s_projected_nodes );
+    realm_.get_buckets( stk::topology::NODE_RANK, s_nodes );
+  
+  if ( momentumEqSys_->manageUcorr_ ) {    
+    // will use a formal consistent mass matrix correction (solve)
+    VectorFieldType *provisionalVelocity = momentumEqSys_->provisionalVelocity_;
+    // require copy from uNp1 to provisional velocity
+    for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
+          ib != node_buckets.end() ; ++ib ) {
+      stk::mesh::Bucket & b = **ib ;
+      const stk::mesh::Bucket::size_type length   = b.size();
+      double * ut = stk::mesh::field_data(*uTmp, b);
+      double * dp = stk::mesh::field_data(*dpdx, b);
+      double * uNp1 = stk::mesh::field_data(velocityNp1, b);
+      double * uProv = stk::mesh::field_data(*provisionalVelocity, b);
 
-  //==========================================================
-  // save off dpdx to uTmp (only required at projected nodes)
-  //==========================================================
-  for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
-        ib != node_buckets.end() ; ++ib ) {
-    stk::mesh::Bucket & b = **ib ;
-    const stk::mesh::Bucket::size_type length   = b.size();
-    double * ut = stk::mesh::field_data(*uTmp, b);
-    double * dp = stk::mesh::field_data(*dpdx, b);
-    for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
-      const int offSet = k*nDim;
-      for ( int j = 0; j < nDim; ++j ) {
-        ut[offSet+j] = dp[offSet+j];
+      for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
+        const int offSet = k*nDim;
+        for ( int j = 0; j < nDim; ++j ) {
+          ut[offSet+j] = dp[offSet+j];
+          uProv[offSet+j] = uNp1[offSet+j];
+        }
+      }
+    }
+  }
+  else {
+    // nodal projection only, no need for provisional velocity
+    for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
+          ib != node_buckets.end() ; ++ib ) {
+      stk::mesh::Bucket & b = **ib ;
+      const stk::mesh::Bucket::size_type length   = b.size();
+      double * ut = stk::mesh::field_data(*uTmp, b);
+      double * dp = stk::mesh::field_data(*dpdx, b);
+  
+      for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
+        const int offSet = k*nDim;
+        for ( int j = 0; j < nDim; ++j ) {
+          ut[offSet+j] = dp[offSet+j];
+        }
       }
     }
   }
@@ -695,25 +709,40 @@ LowMachEquationSystem::project_nodal_velocity()
   //==========================================================
   // project u, u^n+1 = u^k+1 - dt/rho*(Gjp^N+1 - uTmp);
   //==========================================================
-  for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
-        ib != node_buckets.end() ; ++ib ) {
-    stk::mesh::Bucket & b = **ib ;
-    const stk::mesh::Bucket::size_type length   = b.size();
-    double * uNp1 = stk::mesh::field_data(velocityNp1, b);
-    double * ut = stk::mesh::field_data(*uTmp, b);
-    double * dp = stk::mesh::field_data(*dpdx, b);
-    double * rho = stk::mesh::field_data(densityNp1, b);
-
-    for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
-
-      // Get scaling factor
-      const double fac = projTimeScale/rho[k];
-
-      // projection step
-      const size_t offSet = k*nDim;
-      for ( int j = 0; j < nDim; ++j ) {
-        const double gdpx = dp[offSet+j] - ut[offSet+j];
-        uNp1[offSet+j] -= fac*gdpx;
+  
+  if ( momentumEqSys_->manageUcorr_ ) {
+    momentumEqSys_->compute_u_correction();
+  }
+  else {
+  
+    // selector and node_buckets (only projected nodes)
+    stk::mesh::Selector s_projected_nodes
+      = !stk::mesh::selectUnion(momentumEqSys_->notProjectedPart_) &
+      stk::mesh::selectField(*dpdx);
+    stk::mesh::BucketVector const& p_node_buckets =
+      realm_.get_buckets( stk::topology::NODE_RANK, s_projected_nodes );
+    
+    // process loop
+    for ( stk::mesh::BucketVector::const_iterator ib = p_node_buckets.begin() ;
+          ib != p_node_buckets.end() ; ++ib ) {
+      stk::mesh::Bucket & b = **ib ;
+      const stk::mesh::Bucket::size_type length   = b.size();
+      double * uNp1 = stk::mesh::field_data(velocityNp1, b);
+      double * ut = stk::mesh::field_data(*uTmp, b);
+      double * dp = stk::mesh::field_data(*dpdx, b);
+      double * rho = stk::mesh::field_data(densityNp1, b);
+      
+      for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
+        
+        // Get scaling factor
+        const double fac = projTimeScale/rho[k];
+        
+        // projection step
+        const size_t offSet = k*nDim;
+        for ( int j = 0; j < nDim; ++j ) {
+          const double gdpx = dp[offSet+j] - ut[offSet+j];
+          uNp1[offSet+j] -= fac*gdpx;
+        }
       }
     }
   }
@@ -745,9 +774,12 @@ LowMachEquationSystem::post_converged_work()
 //-------- constructor -----------------------------------------------------
 //--------------------------------------------------------------------------
 MomentumEquationSystem::MomentumEquationSystem(
-  EquationSystems& eqSystems)
+  EquationSystems& eqSystems,
+  const bool manageUcorr)
   : EquationSystem(eqSystems, "MomentumEQS"),
+    manageUcorr_(manageUcorr),
     velocity_(NULL),
+    provisionalVelocity_(NULL),
     dudx_(NULL),
     coordinates_(NULL),
     uTmp_(NULL),
@@ -758,7 +790,8 @@ MomentumEquationSystem::MomentumEquationSystem(
     diffFluxCoeffAlgDriver_(new AlgorithmDriver(realm_)),
     tviscAlgDriver_(new AlgorithmDriver(realm_)),
     cflReyAlgDriver_(new AlgorithmDriver(realm_)),
-    wallFunctionParamsAlgDriver_(NULL)
+    wallFunctionParamsAlgDriver_(NULL),
+    uCorrEqs_(NULL)
 {
   // extract solver name and solver object
   std::string solverName = realm_.equationSystems_.get_solver_block_name("velocity");
@@ -772,6 +805,10 @@ MomentumEquationSystem::MomentumEquationSystem(
   // push back EQ to manager
   realm_.equationSystems_.push_back(this);
 
+  // create u corection equation system
+  if ( manageUcorr_ ) {
+    uCorrEqs_ = new VelocityCorrectionEquationSystem(eqSystems);
+  }
 }
 
 //--------------------------------------------------------------------------
@@ -808,7 +845,6 @@ MomentumEquationSystem::initial_work()
   const double timeB = stk::cpu_time();
   timerMisc_ += (timeB-timeA);
 
-
 }
 
 //--------------------------------------------------------------------------
@@ -828,6 +864,12 @@ MomentumEquationSystem::register_nodal_fields(
   velocity_ =  &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity", numStates));
   stk::mesh::put_field(*velocity_, *part, nDim);
   realm_.augment_restart_variable_list("velocity");
+
+  // may require provisional velocity
+  if ( manageUcorr_ ) {
+    provisionalVelocity_ =  &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "provisional_velocity"));
+    stk::mesh::put_field(*provisionalVelocity_, *part, nDim);
+  }
 
   dudx_ =  &(meta_data.declare_field<GenericFieldType>(stk::topology::NODE_RANK, "dudx"));
   stk::mesh::put_field(*dudx_, *part, nDim*nDim);
@@ -861,7 +903,6 @@ MomentumEquationSystem::register_nodal_fields(
                                stk::topology::NODE_RANK);
     copyStateAlg_.push_back(theCopyAlg);
   }
-
 }
 
 //--------------------------------------------------------------------------
@@ -1643,6 +1684,15 @@ MomentumEquationSystem::compute_wall_function_params()
   if (NULL != wallFunctionParamsAlgDriver_){
     wallFunctionParamsAlgDriver_->execute();
   }
+}
+
+//--------------------------------------------------------------------------
+//-------- compute_u_correction --------------------------------------------
+//--------------------------------------------------------------------------
+void
+MomentumEquationSystem::compute_u_correction()
+{
+  uCorrEqs_->solve_and_update_external();
 }
 
 //==========================================================================

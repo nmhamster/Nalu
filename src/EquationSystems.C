@@ -92,9 +92,11 @@ void EquationSystems::load(const YAML::Node & y_node)
           if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = LowMachEOM " << std::endl;
           bool elemCont = (realm_.realmUsesEdges_) ? false : true;
           get_if_present_no_default(*y_eqsys, "element_continuity_eqs", elemCont);
+          bool manageUcorr = false;
+          get_if_present_no_default(*y_eqsys, "manage_ucorr", manageUcorr);
           bool managePNG = false;
           get_if_present_no_default(*y_eqsys, "manage_png", managePNG);
-          eqSys = new LowMachEquationSystem(*this, elemCont, managePNG);
+          eqSys = new LowMachEquationSystem(*this, elemCont, managePNG, manageUcorr);
         }
         else if( (y_eqsys = expect_map(y_system, "ShearStressTransport", true)) ) {
           if (root()->debug()) NaluEnv::self().naluOutputP0() << "eqSys = tke/sdr " << std::endl;

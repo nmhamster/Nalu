@@ -7,7 +7,7 @@
 
 
 // nalu
-#include <AssemblePNGElemSolverAlgorithm.h>
+#include <AssembleUcorrElemSolverAlgorithm.h>
 #include <EquationSystem.h>
 #include <SolverAlgorithm.h>
 
@@ -29,28 +29,30 @@ namespace nalu{
 //==========================================================================
 // Class Definition
 //==========================================================================
-// AssemblePNGElemSolverAlgorithm - add LHS/RHS for uvw momentum
+// AssembleUcorrElemSolverAlgorithm - add LHS/RHS for uvw momentum pressureP
 //==========================================================================
 //--------------------------------------------------------------------------
 //-------- constructor -----------------------------------------------------
 //--------------------------------------------------------------------------
-AssemblePNGElemSolverAlgorithm::AssemblePNGElemSolverAlgorithm(
+AssembleUcorrElemSolverAlgorithm::AssembleUcorrElemSolverAlgorithm(
   Realm &realm,
   stk::mesh::Part *part,
-  EquationSystem *eqSystem,
-  std::string independentDofName,
-  std::string dofName)
+  EquationSystem *eqSystem)
   : SolverAlgorithm(realm, part, eqSystem),
-    scalarQ_(NULL),
-    dqdx_(NULL),
-    coordinates_(NULL),
+    velocity_(NULL),
+    provisionalVelocity_(NULL),
+    density_(NULL),
+    GjpK_(NULL),
+    GjpNew_(NULL),
     scVolume_(NULL)
 {
-  // save off data
+  // save off data; old pressure gradient stored in uTmp (LowMachEquationSystem::project_nodal_gradient)
   stk::mesh::MetaData & meta_data = realm_.meta_data();
-  scalarQ_ = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, independentDofName);
-  dqdx_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, dofName);
-  coordinates_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, realm_.get_coordinates_name());
+  velocity_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity");
+  provisionalVelocity_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "provisional_velocity");
+  density_ = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "density");
+  GjpK_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "uTmp");
+  GjpNew_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "dpdx");
   scVolume_ = meta_data.get_field<GenericFieldType>(stk::topology::ELEMENT_RANK, "sc_volume");
 }
 
@@ -58,7 +60,7 @@ AssemblePNGElemSolverAlgorithm::AssemblePNGElemSolverAlgorithm(
 //-------- initialize_connectivity -----------------------------------------
 //--------------------------------------------------------------------------
 void
-AssemblePNGElemSolverAlgorithm::initialize_connectivity()
+AssembleUcorrElemSolverAlgorithm::initialize_connectivity()
 {
   eqSystem_->linsys_->buildElemToNodeGraph(partVec_);
 }
@@ -67,12 +69,21 @@ AssemblePNGElemSolverAlgorithm::initialize_connectivity()
 //-------- execute ---------------------------------------------------------
 //--------------------------------------------------------------------------
 void
-AssemblePNGElemSolverAlgorithm::execute()
+AssembleUcorrElemSolverAlgorithm::execute()
 {
 
   stk::mesh::MetaData & meta_data = realm_.meta_data();
 
   const int nDim = meta_data.spatial_dimension();
+
+  // time step
+  const double dt = realm_.get_time_step();
+  const double gamma1 = realm_.get_gamma1();
+  const double projTimeScale = dt/gamma1;
+
+  // deal with state
+  VectorFieldType &velocityNp1 = velocity_->field_of_state(stk::mesh::StateNP1);
+  ScalarFieldType &densityNp1 = density_->field_of_state(stk::mesh::StateNP1);
 
   // space for LHS/RHS; nodesPerElem*nDim*nodesPerElem*nDim and nodesPerElem*nDim
   std::vector<double> lhs;
@@ -80,19 +91,25 @@ AssemblePNGElemSolverAlgorithm::execute()
   std::vector<stk::mesh::Entity> connected_nodes;
 
   // nodal fields to gather
-  std::vector<double> ws_scalarQ;
-  std::vector<double> ws_dqdx;
-  std::vector<double> ws_coordinates;
+  std::vector<double> ws_velocityNp1;
+  std::vector<double> ws_provisionalVelocity;
+  std::vector<double> ws_densityNp1;
+  std::vector<double> ws_GjpK;
+  std::vector<double> ws_GjpNew;
 
   // geometry related to populate
-  std::vector<double> ws_scs_areav;
-  std::vector<double> ws_shape_function_scs;
   std::vector<double> ws_shape_function_scv;
 
   // fixed size with pointers
-  std::vector<double> dqdxScv(nDim,0.0);
-  double *p_dqdxScv = &dqdxScv[0];
-
+  std::vector<double> uNp1Scv(nDim,0.0);
+  std::vector<double> uProvScv(nDim,0.0);
+  std::vector<double> GjpKScv(nDim,0.0);
+  std::vector<double> GjpNewScv(nDim,0.0);
+  double *p_uNp1Scv = &uNp1Scv[0];
+  double *p_uProvScv = &uProvScv[0];
+  double *p_GjpKScv = &GjpKScv[0];
+  double *p_GjpNewScv = &GjpNewScv[0];
+  
   // define some common selectors
   stk::mesh::Selector s_locally_owned_union = meta_data.locally_owned_part()
     &stk::mesh::selectUnion(partVec_);
@@ -105,16 +122,13 @@ AssemblePNGElemSolverAlgorithm::execute()
     const stk::mesh::Bucket::size_type length   = b.size();
 
     // extract master element
-    MasterElement *meSCS = realm_.get_surface_master_element(b.topology());
     MasterElement *meSCV = realm_.get_volume_master_element(b.topology());
 
     // extract master element specifics
-    const int nodesPerElement = meSCS->nodesPerElement_;
-    const int numScsIp = meSCS->numIntPoints_;
+    const int nodesPerElement = meSCV->nodesPerElement_;
     const int numScvIp = meSCV->numIntPoints_;
 
-    // mappings for this element, SCS and SCV
-    const int *lrscv = meSCS->adjacentNodes();
+    // mappings for this element, SCV
     const int *ipNodeMap = meSCV->ipNodeMap();
 
     // resize some things; matrix related
@@ -125,25 +139,24 @@ AssemblePNGElemSolverAlgorithm::execute()
     connected_nodes.resize(nodesPerElement);
 
     // algorithm related
-    ws_scalarQ.resize(nodesPerElement);
-    ws_dqdx.resize(nodesPerElement*nDim);
-    ws_coordinates.resize(nodesPerElement*nDim);
-    ws_scs_areav.resize(numScsIp*nDim);
-    ws_shape_function_scs.resize(numScsIp*nodesPerElement);
+    ws_velocityNp1.resize(nodesPerElement*nDim);
+    ws_provisionalVelocity.resize(nodesPerElement*nDim);
+    ws_densityNp1.resize(nodesPerElement);
+    ws_GjpK.resize(nodesPerElement*nDim);
+    ws_GjpNew.resize(nodesPerElement*nDim);
     ws_shape_function_scv.resize(numScvIp*nodesPerElement);
 
     // pointer to lhs/rhs
     double *p_lhs = &lhs[0];
     double *p_rhs = &rhs[0];
-    double *p_scalarQ = &ws_scalarQ[0];
-    double *p_dqdx = &ws_dqdx[0];
-    double *p_coordinates = &ws_coordinates[0];
-    double *p_scs_areav = &ws_scs_areav[0];
-    double *p_shape_function_scs = &ws_shape_function_scs[0];
+    double *p_velocityNp1 = &ws_velocityNp1[0];
+    double *p_provisionalVelocity = &ws_provisionalVelocity[0];
+    double *p_densityNp1 = &ws_densityNp1[0];
+    double *p_GjpK = &ws_GjpK[0];
+    double *p_GjpNew = &ws_GjpNew[0];
     double *p_shape_function_scv = &ws_shape_function_scv[0];
 
     // extract shape function
-    meSCS->shape_fcn(&p_shape_function_scs[0]);
     meSCV->shape_fcn(&p_shape_function_scv[0]);
 
     for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
@@ -175,67 +188,28 @@ AssemblePNGElemSolverAlgorithm::execute()
         // set connected nodes
         connected_nodes[ni] = node;
 
-        // pointers to real data
-        const double scalarQ   = *stk::mesh::field_data(*scalarQ_, node);
-        const double * dqdx   =  stk::mesh::field_data(*dqdx_, node);
-        const double * coords =  stk::mesh::field_data(*coordinates_, node);
-
+        // pointers to real data; vector and scalar
+        const double * uNp1  =  stk::mesh::field_data(velocityNp1, node);
+        const double * uProv  =  stk::mesh::field_data(*provisionalVelocity_, node);
+        const double * GjpK =  stk::mesh::field_data(*GjpK_, node);
+        const double * GjpNew =  stk::mesh::field_data(*GjpNew_, node);
+        const double  rhoNp1  =  *stk::mesh::field_data(densityNp1, node);
+      
         // gather scalars
-        p_scalarQ[ni] = scalarQ;
-
+        p_densityNp1[ni] = rhoNp1;
+  
         // gather vectors
         const int niNdim = ni*nDim;
 
         for ( int i=0; i < nDim; ++i ) {
-          p_dqdx[niNdim+i] = dqdx[i];
-          p_coordinates[niNdim+i] = coords[i];
+          p_velocityNp1[niNdim+i] = uNp1[i];
+          p_provisionalVelocity[niNdim+i] = uProv[i];
+          p_GjpK[niNdim+i] = GjpK[i];
+          p_GjpNew[niNdim+i] = GjpNew[i];
         }
       }
 
-      // compute geometry
-      double scs_error = 0.0;
-      meSCS->determinant(1, &p_coordinates[0], &p_scs_areav[0], &scs_error);
-
-      // handle scs first; all RHS as if it is a source term
-      for ( int ip = 0; ip < numScsIp; ++ip ) {
-
-        const int ipNdim = ip*nDim;
-
-        const int offSetSF = ip*nodesPerElement;
-
-        // left and right nodes for this ip
-        const int il = lrscv[2*ip];
-        const int ir = lrscv[2*ip+1];
-
-        // save off some offsets
-        const int ilNdim = il*nDim;
-        const int irNdim = ir*nDim;
-
-        // compute scs point values
-        double scalarQIp = 0.0;
-        for ( int ic = 0; ic < nodesPerElement; ++ic ) {
-          const double r = p_shape_function_scs[offSetSF+ic];
-          scalarQIp += r*p_scalarQ[ic];
-        }
-      
-        // add residual for each component i
-        for ( int i = 0; i < nDim; ++i ) {  
-          const int indexL = ilNdim + i;
-          const int indexR = irNdim + i;
-
-          const int rowL = indexL*nodesPerElement*nDim;
-          const int rowR = indexR*nodesPerElement*nDim;
-
-          const double axi = p_scs_areav[ipNdim+i];
-
-          // right hand side; L and R
-          const double rhsFac = -scalarQIp*axi;
-          p_rhs[indexL] -= rhsFac;
-          p_rhs[indexR] += rhsFac;  
-        }
-      }
-
-      // handle scv LHS second
+      // handle scv RHS/LHS
       for ( int ip = 0; ip < numScvIp; ++ip ) {
 
         // nearest node to ip
@@ -247,19 +221,30 @@ AssemblePNGElemSolverAlgorithm::execute()
         const double scV = scVolume[ip];
 
         // zero out scv
-        for ( int j = 0; j < nDim; ++j )
-          p_dqdxScv[j] = 0.0;
-        
+        for ( int j = 0; j < nDim; ++j ) {
+          p_uNp1Scv[j] = 0.0;
+          p_uProvScv[j] = 0.0;
+          p_GjpKScv[j] = 0.0;
+          p_GjpNewScv[j] = 0.0;
+        }
+        double rhoScv = 0.0;
+
+        // interpolate
         for ( int ic = 0; ic < nodesPerElement; ++ic ) {
           const double r = p_shape_function_scv[offSetSF+ic];
+          rhoScv += r*p_densityNp1[ic];
           for ( int j = 0; j < nDim; ++j ) {
-            p_dqdxScv[j] += r*p_dqdx[ic*nDim+j];
+            p_uNp1Scv[j] += r*p_velocityNp1[ic*nDim+j];
+            p_uProvScv[j] += r*p_provisionalVelocity[ic*nDim+j];
+            p_GjpKScv[j] += r*p_GjpK[ic*nDim+j];
+            p_GjpNewScv[j] += r*p_GjpNew[ic*nDim+j];
           }
         }
       
         // assemble rhs
         for ( int i = 0; i < nDim; ++i ) {
-          p_rhs[nnNdim+i] -= p_dqdxScv[i]*scV;
+          const double residual = -((p_uNp1Scv[i] - p_uProvScv[i]) + projTimeScale/rhoScv*(p_GjpNewScv[i] - p_GjpKScv[i])); 
+          p_rhs[nnNdim+i] -= residual*scV;
         }
 
         // manage LHS
