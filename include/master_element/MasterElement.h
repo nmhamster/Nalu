@@ -298,6 +298,61 @@ public:
   bool within_tol( const double & val, const double & tol );
 };
 
+
+// 3D Quad 27 subcontrol volume
+class Hex27SCV : public MasterElement
+{
+public:
+  Hex27SCV();
+  ~Hex27SCV();
+
+  const int * ipNodeMap();
+
+  void determinant(
+    const int nelem,
+    const double *coords,
+    double *areav,
+    double * error );
+
+  void shape_fcn(
+    double *shpfc);
+
+  void shifted_shape_fcn(
+    double *shpfc);
+
+  void hex27_shape_fcn(
+    const int &npts,
+    const double *par_coord, 
+    double* shape_fcn);
+};
+
+// 3D Hex 27 subcontrol surface
+class Hex27SCS : public MasterElement
+{
+public:
+  Hex27SCS();
+  ~Hex27SCS();
+
+  const int * adjacentNodes();
+
+  void determinant(
+    const int nelem,
+    const double *coords,
+    double *areav,
+    double * error );
+
+  void grad_op(
+    const int nelem,
+    const double *coords,
+    double *gradop,
+    double *deriv,
+    double *det_j,
+    double * error );
+
+  void shape_fcn(
+    double *shpfc);
+};
+
 // Tet 4 subcontrol volume
 class TetSCV : public MasterElement
 {
@@ -313,7 +368,6 @@ public:
     const double *coords,
     double *areav,
     double * error );
-
 };
 
 // Tet 4 subcontrol surface
@@ -907,6 +961,38 @@ public:
   double parametric_distance(const std::vector<double> &x);
 
   const double elemThickness_;
+};
+
+// 3D Quad 9
+class Quad93DSCS : public MasterElement
+{
+public:
+  Quad93DSCS();
+  virtual ~Quad93DSCS();
+
+  const int * ipNodeMap();
+
+  void determinant(
+    const int nelem,
+    const double *coords,
+    double *areav,
+    double * error );
+
+  void area_vector(
+    const double *coords,
+    const double s,
+    double *normalVec);
+
+  void shape_fcn(
+    double *shpfc);
+
+  void shifted_shape_fcn(
+    double *shpfc);
+  
+  void quad9_shape_fcn(
+    const int &npts,
+    const double *par_coord, 
+    double* shape_fcn);
 };
 
 // 3D Tri 3

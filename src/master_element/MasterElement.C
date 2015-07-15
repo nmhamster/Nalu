@@ -932,6 +932,210 @@ bool HexSCS::within_tol( const double & val, const double & tol )
 //--------------------------------------------------------------------------
 //-------- constructor -----------------------------------------------------
 //--------------------------------------------------------------------------
+Hex27SCV::Hex27SCV()
+  : MasterElement()
+{
+  nDim_ = 3;
+  nodesPerElement_ = 27;
+  numIntPoints_ = 1;
+
+  // define ip node mappings
+  ipNodeMap_.resize(1);
+}
+
+//--------------------------------------------------------------------------
+//-------- destructor ------------------------------------------------------
+//--------------------------------------------------------------------------
+Hex27SCV::~Hex27SCV()
+{
+  // does nothing
+}
+
+//--------------------------------------------------------------------------
+//-------- ipNodeMap -------------------------------------------------------
+//--------------------------------------------------------------------------
+const int *
+Hex27SCV::ipNodeMap()
+{
+  // define scv->node mappings
+  return &ipNodeMap_[0];
+}
+
+//--------------------------------------------------------------------------
+//-------- determinant -----------------------------------------------------
+//--------------------------------------------------------------------------
+void Hex27SCV::determinant(
+  const int nelem,
+  const double *coords,
+  double *volume,
+  double *error)
+{
+  // nothing yet
+}
+
+//--------------------------------------------------------------------------
+//-------- shape_fcn -------------------------------------------------------
+//--------------------------------------------------------------------------
+void
+Hex27SCV::shape_fcn(double *shpfc)
+{
+  // nothing yet
+}
+
+//--------------------------------------------------------------------------
+//-------- shifted_shape_fcn -----------------------------------------------
+//--------------------------------------------------------------------------
+void
+Hex27SCV::shifted_shape_fcn(double *shpfc)
+{
+  // nothing yet
+}
+
+//--------------------------------------------------------------------------
+//-------- hex27_shape_fcn -------------------------------------------------
+//--------------------------------------------------------------------------
+void
+Hex27SCV::hex27_shape_fcn(
+  const int  &numIntPoints,
+  const double *intgLoc,
+  double *shpfc)
+{
+  const double one = 1.0;
+  const double half = 1.0/2.0;
+  const double one4th = 1.0/4.0;
+  const double one8th = 1.0/8.0;
+
+  for ( int ip = 0; ip < numIntPoints; ++ip ) {
+    int twentySevenIp = 27*ip; // nodes per element is always 27
+    int k = 3*ip;
+
+    const double s = intgLoc[k];
+    const double t = intgLoc[k+1];
+    const double u = intgLoc[k+2];
+ 
+    const double stu = s * t * u;
+    const double st  = s * t;
+    const double su  = s * u;
+    const double tu  = t * u;
+
+    const double one_m_s = one - s;
+    const double one_p_s = one + s;
+    const double one_m_t = one - t;
+    const double one_p_t = one + t;
+    const double one_m_u = one - u;
+    const double one_p_u = one + u;
+      
+    const double one_m_ss = one - s * s;
+    const double one_m_tt = one - t * t;
+    const double one_m_uu = one - u * u;
+    
+    shpfc[twentySevenIp ]    = -one8th * stu * one_m_s  * one_m_t  * one_m_u;
+    shpfc[twentySevenIp +1]  =  one8th * stu * one_p_s  * one_m_t  * one_m_u;
+    shpfc[twentySevenIp +2]  = -one8th * stu * one_p_s  * one_p_t  * one_m_u;
+    shpfc[twentySevenIp +3]  =  one8th * stu * one_m_s  * one_p_t  * one_m_u;
+    shpfc[twentySevenIp +4]  =  one8th * stu * one_m_s  * one_m_t  * one_p_u;
+    shpfc[twentySevenIp +5]  = -one8th * stu * one_p_s  * one_m_t  * one_p_u;
+    shpfc[twentySevenIp +6]  =  one8th * stu * one_p_s  * one_p_t  * one_p_u;
+    shpfc[twentySevenIp +7]  = -one8th * stu * one_m_s  * one_p_t  * one_p_u;
+    shpfc[twentySevenIp +8]  =  one4th * tu  * one_m_ss * one_m_t  * one_m_u;
+    shpfc[twentySevenIp +9]  = -one4th * su  * one_p_s  * one_m_tt * one_m_u;
+    shpfc[twentySevenIp +10] = -one4th * tu  * one_m_ss * one_p_t  * one_m_u;
+    shpfc[twentySevenIp +11] =  one4th * su  * one_m_s  * one_m_tt * one_m_u;
+    shpfc[twentySevenIp +12] =  one4th * st  * one_m_s  * one_m_t  * one_m_uu;
+    shpfc[twentySevenIp +13] = -one4th * st  * one_p_s  * one_m_t  * one_m_uu;
+    shpfc[twentySevenIp +14] =  one4th * st  * one_p_s  * one_p_t  * one_m_uu;
+    shpfc[twentySevenIp +15] = -one4th * st  * one_m_s  * one_p_t  * one_m_uu;
+    shpfc[twentySevenIp +16] = -one4th * tu  * one_m_ss * one_m_t  * one_p_u;
+    shpfc[twentySevenIp +17] =  one4th * su  * one_p_s  * one_m_tt * one_p_u;
+    shpfc[twentySevenIp +18] =  one4th * tu  * one_m_ss * one_p_t  * one_p_u;
+    shpfc[twentySevenIp +19] = -one4th * su  * one_m_s  * one_m_tt * one_p_u;
+    shpfc[twentySevenIp +20] =                 one_m_ss * one_m_tt * one_m_uu;
+    shpfc[twentySevenIp +21] =   -half * u   * one_m_ss * one_m_tt * one_m_u;
+    shpfc[twentySevenIp +22] =    half * u   * one_m_ss * one_m_tt * one_p_u;
+    shpfc[twentySevenIp +23] =   -half * s   * one_m_s  * one_m_tt * one_m_uu;
+    shpfc[twentySevenIp +24] =    half * s   * one_p_s  * one_m_tt * one_m_uu;
+    shpfc[twentySevenIp +25] =   -half * t   * one_m_ss * one_m_t  * one_m_uu;
+    shpfc[twentySevenIp +27] =    half * t   * one_m_ss * one_p_t  * one_m_uu;
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- constructor -----------------------------------------------------
+//--------------------------------------------------------------------------
+Hex27SCS::Hex27SCS()
+  : MasterElement()
+{
+  nDim_ = 3;
+  nodesPerElement_ = 27;
+  numIntPoints_ = 1;
+
+  // define L/R mappings
+  lrscv_.resize(1);
+
+  // standard integration location
+  intgLoc_.resize(1);    
+
+  // shifted
+  intgLocShift_.resize(1);
+}
+
+//--------------------------------------------------------------------------
+//-------- destructor ------------------------------------------------------
+//--------------------------------------------------------------------------
+Hex27SCS::~Hex27SCS()
+{
+  // does nothing
+}
+
+//--------------------------------------------------------------------------
+//-------- determinant -----------------------------------------------------
+//--------------------------------------------------------------------------
+void Hex27SCS::determinant(
+  const int nelem,
+  const double *coords,
+  double *volume,
+  double *error)
+{
+  // nothing yet
+}
+
+//--------------------------------------------------------------------------
+//-------- grad_op ---------------------------------------------------------
+//--------------------------------------------------------------------------
+void Hex27SCS::grad_op(
+  const int nelem,
+  const double *coords,
+  double *gradop,
+  double *deriv,
+  double *det_j,
+  double *error)
+{
+  // does nothing
+}
+
+//--------------------------------------------------------------------------
+//-------- adjacentNodes ---------------------------------------------------
+//--------------------------------------------------------------------------
+const int *
+Hex27SCS::adjacentNodes()
+{
+  // define L/R mappings
+  return &lrscv_[0];
+}
+
+//--------------------------------------------------------------------------
+//-------- shape_fcn -------------------------------------------------------
+//--------------------------------------------------------------------------
+void
+Hex27SCS::shape_fcn(double *shpfc)
+{
+  // does nothing
+}
+
+
+//--------------------------------------------------------------------------
+//-------- constructor -----------------------------------------------------
+//--------------------------------------------------------------------------
 TetSCV::TetSCV()
   : MasterElement()
 {
@@ -3063,10 +3267,6 @@ Quad92DSCS::determinant(const int nelem,
   double* areav,
   double* error)
 {
-
-  //  SIERRA_FORTRAN(quad9_scs_det)
-  //    ( &nelem, &nodesPerElement_, &numIntPoints_, coords, areav );
-
   //returns the normal vector (dyds,-dxds) for constant t curves
   //returns the normal vector (dydt,-dxdt) for constant s curves
 
@@ -4178,6 +4378,117 @@ Quad3DSCS::general_shape_fcn(
 //--------------------------------------------------------------------------
 //-------- constructor -----------------------------------------------------
 //--------------------------------------------------------------------------
+Quad93DSCS::Quad93DSCS()
+  : MasterElement()
+{
+  nDim_ = 2;
+  nodesPerElement_ = 9;
+  numIntPoints_ = 16;
+
+  // define ip node mappings
+  ipNodeMap_.resize(16);
+
+  intgLoc_.resize(16);
+  intgLocShift_.resize(16);
+}
+
+//--------------------------------------------------------------------------
+//-------- destructor ------------------------------------------------------
+//--------------------------------------------------------------------------
+Quad93DSCS::~Quad93DSCS()
+{
+  // does nothing
+}
+
+//--------------------------------------------------------------------------
+//-------- ipNodeMap -------------------------------------------------------
+//--------------------------------------------------------------------------
+const int *
+Quad93DSCS::ipNodeMap()
+{
+  // define scv->node mappings
+  return &ipNodeMap_[0];
+}
+
+//--------------------------------------------------------------------------
+//-------- determinant -----------------------------------------------------
+//--------------------------------------------------------------------------
+void Quad93DSCS::determinant(
+  const int nelem,
+  const double *coords,
+  double *areav,
+  double *error)
+{
+}
+
+//--------------------------------------------------------------------------
+//-------- shape_fcn -------------------------------------------------------
+//--------------------------------------------------------------------------
+void
+Quad93DSCS::shape_fcn(double *shpfc)
+{
+  quad9_shape_fcn(numIntPoints_, &intgLoc_[0], shpfc);
+}
+
+//--------------------------------------------------------------------------
+//-------- shifted_shape_fcn -----------------------------------------------
+//--------------------------------------------------------------------------
+void
+Quad93DSCS::shifted_shape_fcn(double *shpfc)
+{
+  quad9_shape_fcn(numIntPoints_, &intgLocShift_[0], shpfc);
+}
+
+//--------------------------------------------------------------------------
+//-------- quad9_shape_fcn -----------------------------------------------
+//--------------------------------------------------------------------------
+void
+Quad93DSCS::quad9_shape_fcn(
+  const int  &numIntPoints,
+  const double *intgLoc,
+  double *shpfc)
+{
+  for ( int ip = 0; ip < numIntPoints; ++ip ) {
+    int nineIp = 9*ip; // nodes per element is always 9
+    int k = 2*ip;
+    const double s = intgLoc[k];
+    const double t = intgLoc[k+1];
+
+    const double one_m_s = 1.0 - s;
+    const double one_p_s = 1.0 + s;
+    const double one_m_t = 1.0 - t;
+    const double one_p_t = 1.0 + t;
+
+    const double one_m_ss = 1.0 - s * s;
+    const double one_m_tt = 1.0 - t * t;
+
+    shpfc[nineIp  ] =  0.25 * s * t *  one_m_s *  one_m_t;
+    shpfc[nineIp+1] = -0.25 * s * t *  one_p_s *  one_m_t;
+    shpfc[nineIp+2] =  0.25 * s * t *  one_p_s *  one_p_t;
+    shpfc[nineIp+3] = -0.25 * s * t *  one_m_s *  one_p_t;
+    shpfc[nineIp+4] = -0.50 *     t *  one_p_s *  one_m_s * one_m_t;
+    shpfc[nineIp+5] =  0.50 * s     *  one_p_t *  one_m_t * one_p_s;
+    shpfc[nineIp+6] =  0.50 *     t *  one_p_s *  one_m_s * one_p_t;
+    shpfc[nineIp+7] = -0.50 * s     *  one_p_t *  one_m_t * one_m_s;
+    shpfc[nineIp+8] =  one_m_ss * one_m_tt;
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- area_vector -----------------------------------------------------
+//--------------------------------------------------------------------------
+void
+Quad93DSCS::area_vector(
+  const double *coords,
+  const double s,
+  double *normalVec)
+{
+  
+}
+
+//--------------------------------------------------------------------------
+//-------- constructor -----------------------------------------------------
+//--------------------------------------------------------------------------
 Tri3DSCS::Tri3DSCS()
   : MasterElement()
 {
@@ -4686,10 +4997,6 @@ void Edge32DSCS::determinant(
   double *areav,
   double *error)
 {
-//  SIERRA_FORTRAN(edge32d_scs_det)
-//    ( &nelem, &nodesPerElement_, &numIntPoints_,
-//      coords, areav );
-
   std::vector<double> normalVec(nDim_);
   std::vector<double> elemNodalCoords(nDim_ * nodesPerElement_);
 

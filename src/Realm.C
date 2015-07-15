@@ -3476,6 +3476,10 @@ Realm::get_volume_master_element(
         theElem = new HexSCV();
         break;
 
+      case stk::topology::HEX_27:
+        theElem = new Hex27SCV();
+        break;
+
       case stk::topology::TET_4:
         theElem = new TetSCV();
         break;
@@ -3536,6 +3540,10 @@ Realm::get_surface_master_element(
         theElem = new HexSCS();
         break;
 
+      case stk::topology::HEX_27:
+        theElem = new Hex27SCS();
+        break;
+
       case stk::topology::TET_4:
         theElem = new TetSCS();
         break;
@@ -3550,6 +3558,10 @@ Realm::get_surface_master_element(
 
       case stk::topology::QUAD_4:
         theElem =  new Quad3DSCS();
+        break;
+
+      case stk::topology::QUAD_9:
+        theElem =  new Quad93DSCS();
         break;
 
       case stk::topology::TRI_3:
