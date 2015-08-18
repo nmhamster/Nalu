@@ -47,11 +47,6 @@
 #include <ComputeMdotNonConformalAlgorithm.h>
 #include <ComputeWallFrictionVelocityAlgorithm.h>
 #include <ConstantAuxFunction.h>
-#include <user_functions/ConvectingTaylorVortexVelocityAuxFunction.h>
-#include <user_functions/ConvectingTaylorVortexPressureAuxFunction.h>
-#include <user_functions/TornadoAuxFunction.h>
-#include <user_functions/WindEnergyAuxFunction.h>
-#include <user_functions/WindEnergyTaylorVortexAuxFunction.h>
 #include <ContactInfo.h>
 #include <ContinuityGclNodeSuppAlg.h>
 #include <ContinuityLowSpeedCompressibleNodeSuppAlg.h>
@@ -76,6 +71,7 @@
 #include <MomentumBodyForceSrcNodeSuppAlg.h>
 #include <MomentumGclSrcNodeSuppAlg.h>
 #include <MomentumMassBackwardEulerNodeSuppAlg.h>
+#include <MomentumMassBackwardEulerElemSuppAlg.h>
 #include <MomentumMassBDF2NodeSuppAlg.h>
 #include <MomentumMassBDF2ElemSuppAlg.h>
 #include <NaluEnv.h>
@@ -98,11 +94,23 @@
 #include <TurbViscSmagorinskyAlgorithm.h>
 #include <TurbViscSSTAlgorithm.h>
 #include <TurbViscWaleAlgorithm.h>
-#include <VelocityCorrectionEquationSystem.h>
+
+// user function
+#include <user_functions/ConvectingTaylorVortexVelocityAuxFunction.h>
+#include <user_functions/ConvectingTaylorVortexPressureAuxFunction.h>
+#include <user_functions/TornadoAuxFunction.h>
+#include <user_functions/WindEnergyAuxFunction.h>
+#include <user_functions/WindEnergyTaylorVortexAuxFunction.h>
+#include <user_functions/SteadyTaylorVortexMomentumSrcElemSuppAlg.h>
+#include <user_functions/SteadyTaylorVortexContinuitySrcElemSuppAlg.h>
+#include <user_functions/SteadyTaylorVortexMomentumSrcNodeSuppAlg.h>
+#include <user_functions/SteadyTaylorVortexVelocityAuxFunction.h>
+#include <user_functions/SteadyTaylorVortexPressureAuxFunction.h>
 
 // stk_util
 #include <stk_util/parallel/Parallel.hpp>
 #include <stk_util/environment/CPUTime.hpp>
+#include <stk_util/parallel/ParallelReduce.hpp>
 
 // stk_mesh/base/fem
 #include <stk_mesh/base/BulkData.hpp>
@@ -138,8 +146,7 @@ namespace nalu{
 LowMachEquationSystem::LowMachEquationSystem(
   EquationSystems& eqSystems,
   const bool elementContinuityEqs,
-  const bool managePNG,
-  const bool manageUcorr)
+  const bool managePNG)
   : EquationSystem(eqSystems, "LowMachEOSWrap"),
     elementContinuityEqs_(elementContinuityEqs),
     density_(NULL),
@@ -154,7 +161,7 @@ LowMachEquationSystem::LowMachEquationSystem(
   realm_.equationSystems_.push_back(this);
 
   // create momentum and pressure
-  momentumEqSys_= new MomentumEquationSystem(eqSystems, manageUcorr);
+  momentumEqSys_= new MomentumEquationSystem(eqSystems);
   continuityEqSys_ = new ContinuityEquationSystem(eqSystems, elementContinuityEqs_, managePNG);
 }
 
@@ -468,6 +475,20 @@ LowMachEquationSystem::register_initial_condition_fcn(
         throw std::runtime_error("Wind_energy_taylor_vortex missing parameters");
       }
     }
+    else if ( fcnName == "SteadyTaylorVortex" ) {
+      
+      // create the function
+      AuxFunction *theAuxFunc = new SteadyTaylorVortexVelocityAuxFunction(0,nDim);
+      
+      // create the algorithm
+      AuxFunctionAlgorithm *auxAlg
+        = new AuxFunctionAlgorithm(realm_, part,
+            velocityNp1, theAuxFunc,
+            stk::topology::NODE_RANK);
+      
+      // push to ic
+      realm_.initCondAlg_.push_back(auxAlg);
+    }
     else if ( fcnName == "convecting_taylor_vortex" ) {
       
       // create the function
@@ -576,7 +597,115 @@ LowMachEquationSystem::solve_and_update()
 
   // process CFL/Reynolds
   momentumEqSys_->cflReyAlgDriver_->execute();
+  
+  compute_norm();
 
+}
+
+//--------------------------------------------------------------------------
+//-------- compute_norm ----------------------------------------------------
+//--------------------------------------------------------------------------
+void
+LowMachEquationSystem::compute_norm()
+{
+  // this is hacked for the Steady Taylor Vortex verification MMS simulation
+  const bool doIt = false;
+  if ( !doIt )
+    return;
+
+  stk::mesh::MetaData &metaData = realm_.meta_data();
+  stk::mesh::BulkData &bulkData = realm_.bulk_data();
+
+  // extract a field
+  VectorFieldType *velocity_ =  metaData.get_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity");
+  VectorFieldType *dpdx_ =  metaData.get_field<VectorFieldType>(stk::topology::NODE_RANK, "dpdx");
+  VectorFieldType *coordinates_ =  metaData.get_field<VectorFieldType>(stk::topology::NODE_RANK, realm_.get_coordinates_name());
+
+  // save params
+  const int nDim = metaData.spatial_dimension();
+  const double a_ = 20.0;
+  const double pi_ = std::acos(-1.0);
+
+  // size and initialize norm-related quantities
+  double l_LooNorm[4] = {-1.0e16, -1.0e16, -1.0e16, -1.0e16};
+  double l_L1norm[4] = {};
+  double l_L2norm[4] = {};
+  size_t l_nodeCount = 0;
+
+  stk::mesh::Selector s_all_non_bc_nodes
+    = metaData.locally_owned_part() & stk::mesh::selectField(*velocity_);
+
+  stk::mesh::BucketVector const& node_buckets = bulkData.get_buckets( stk::topology::NODE_RANK, s_all_non_bc_nodes );
+  for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
+        ib != node_buckets.end() ; ++ib ) {
+    stk::mesh::Bucket & b = **ib ;
+    const stk::mesh::Bucket::size_type length   = b.size();
+    const double * velocity = stk::mesh::field_data(*velocity_, b);
+    const double * dpdx = stk::mesh::field_data(*dpdx_, b);
+    const double * coords = stk::mesh::field_data(*coordinates_, b);
+    for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
+      // increment node count
+      l_nodeCount++;
+
+      // save off coords
+      const double x = coords[nDim*k+0];
+      const double y = coords[nDim*k+1];
+
+      const double analyticalUx = -cos(a_*pi_*x)*sin(a_*pi_*y);
+      const double analyticalUy = +sin(a_*pi_*x)*cos(a_*pi_*y);
+
+      const double diffUx = std::abs(analyticalUx - velocity[k*nDim+0]);
+      const double diffUy = std::abs(analyticalUy - velocity[k*nDim+1]);
+      
+      const double analyticalDpDx = a_*pi_/2.0*sin(2.0*a_*pi_*x);
+      const double analyticalDpDy = a_*pi_/2.0*sin(2.0*a_*pi_*y);
+   
+      const double diffDpDx = std::abs(analyticalDpDx - dpdx[k*nDim+0]);
+      const double diffDpDy = std::abs(analyticalDpDy - dpdx[k*nDim+1]);
+  
+      // norms...
+      l_LooNorm[0] = std::max(diffUx, l_LooNorm[0]);
+      l_LooNorm[1] = std::max(diffUy, l_LooNorm[1]);
+      l_LooNorm[2] = std::max(diffDpDx, l_LooNorm[2]);
+      l_LooNorm[3] = std::max(diffDpDy, l_LooNorm[3]);;
+
+      l_L1norm[0] += diffUx;
+      l_L1norm[1] += diffUy;
+      l_L1norm[2] += diffDpDx;
+      l_L1norm[3] += diffDpDy;
+
+      l_L2norm[0] += diffUx*diffUx;
+      l_L2norm[1] += diffUy*diffUy;
+      l_L2norm[2] += diffDpDx*diffDpDx;
+      l_L2norm[3] += diffDpDy*diffDpDy;
+    }
+  }
+
+  double g_LooNorm[4] = {};
+  double g_L1norm[4] = {};
+  double g_L2norm[4] = {};
+  size_t g_nodeCount = 0;
+
+  stk::ParallelMachine comm = NaluEnv::self().parallel_comm();
+
+  stk::all_reduce_sum(comm, &l_nodeCount, &g_nodeCount, 1);
+  stk::all_reduce_max(comm, l_LooNorm, g_LooNorm, 4);
+  stk::all_reduce_sum(comm, l_L1norm, g_L1norm, 4);
+  stk::all_reduce_sum(comm, l_L2norm, g_L2norm, 4);
+  
+  NaluEnv::self().naluOutputP0() << "Norm Summary: Node Count: " << g_nodeCount << std::endl;
+  NaluEnv::self().naluOutputP0() << "Loo: " << g_LooNorm[0] << " " << g_LooNorm[1] << " " << g_LooNorm[2] 
+                                     << " " << g_LooNorm[3] << std::endl;
+  NaluEnv::self().naluOutputP0() << "L1:  " << g_L1norm[0]/g_nodeCount 
+                                 << " " << g_L1norm[1]/g_nodeCount
+                                 << " " << g_L1norm[2]/g_nodeCount 
+                                 << " " << g_L1norm[3]/g_nodeCount << std::endl;
+  NaluEnv::self().naluOutputP0() << "L2:  " << std::sqrt(g_L2norm[0])/std::sqrt(g_nodeCount) 
+                                 << " " << std::sqrt(g_L2norm[1])/std::sqrt(g_nodeCount)
+                                 << " " << std::sqrt(g_L2norm[2])/std::sqrt(g_nodeCount)
+                                 << " " << std::sqrt(g_L2norm[3])/std::sqrt(g_nodeCount) << std::endl;
+  
+  // what about an integrated norm?
 }
 
 //--------------------------------------------------------------------------
@@ -661,42 +790,17 @@ LowMachEquationSystem::project_nodal_velocity()
   stk::mesh::BucketVector const& node_buckets =
     realm_.get_buckets( stk::topology::NODE_RANK, s_nodes );
   
-  if ( momentumEqSys_->manageUcorr_ ) {    
-    // will use a formal consistent mass matrix correction (solve)
-    VectorFieldType *provisionalVelocity = momentumEqSys_->provisionalVelocity_;
-    // require copy from uNp1 to provisional velocity
-    for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
-          ib != node_buckets.end() ; ++ib ) {
-      stk::mesh::Bucket & b = **ib ;
-      const stk::mesh::Bucket::size_type length   = b.size();
-      double * ut = stk::mesh::field_data(*uTmp, b);
-      double * dp = stk::mesh::field_data(*dpdx, b);
-      double * uNp1 = stk::mesh::field_data(velocityNp1, b);
-      double * uProv = stk::mesh::field_data(*provisionalVelocity, b);
-
-      for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
-        const int offSet = k*nDim;
-        for ( int j = 0; j < nDim; ++j ) {
-          ut[offSet+j] = dp[offSet+j];
-          uProv[offSet+j] = uNp1[offSet+j];
-        }
-      }
-    }
-  }
-  else {
-    // nodal projection only, no need for provisional velocity
-    for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
-          ib != node_buckets.end() ; ++ib ) {
-      stk::mesh::Bucket & b = **ib ;
-      const stk::mesh::Bucket::size_type length   = b.size();
-      double * ut = stk::mesh::field_data(*uTmp, b);
-      double * dp = stk::mesh::field_data(*dpdx, b);
-  
-      for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
-        const int offSet = k*nDim;
-        for ( int j = 0; j < nDim; ++j ) {
-          ut[offSet+j] = dp[offSet+j];
-        }
+  for ( stk::mesh::BucketVector::const_iterator ib = node_buckets.begin() ;
+        ib != node_buckets.end() ; ++ib ) {
+    stk::mesh::Bucket & b = **ib ;
+    const stk::mesh::Bucket::size_type length   = b.size();
+    double * ut = stk::mesh::field_data(*uTmp, b);
+    double * dp = stk::mesh::field_data(*dpdx, b);
+    
+    for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
+      const int offSet = k*nDim;
+      for ( int j = 0; j < nDim; ++j ) {
+        ut[offSet+j] = dp[offSet+j];
       }
     }
   }
@@ -710,39 +814,33 @@ LowMachEquationSystem::project_nodal_velocity()
   // project u, u^n+1 = u^k+1 - dt/rho*(Gjp^N+1 - uTmp);
   //==========================================================
   
-  if ( momentumEqSys_->manageUcorr_ ) {
-    momentumEqSys_->compute_u_correction();
-  }
-  else {
+  // selector and node_buckets (only projected nodes)
+  stk::mesh::Selector s_projected_nodes
+    = !stk::mesh::selectUnion(momentumEqSys_->notProjectedPart_) &
+    stk::mesh::selectField(*dpdx);
+  stk::mesh::BucketVector const& p_node_buckets =
+    realm_.get_buckets( stk::topology::NODE_RANK, s_projected_nodes );
   
-    // selector and node_buckets (only projected nodes)
-    stk::mesh::Selector s_projected_nodes
-      = !stk::mesh::selectUnion(momentumEqSys_->notProjectedPart_) &
-      stk::mesh::selectField(*dpdx);
-    stk::mesh::BucketVector const& p_node_buckets =
-      realm_.get_buckets( stk::topology::NODE_RANK, s_projected_nodes );
+  // process loop
+  for ( stk::mesh::BucketVector::const_iterator ib = p_node_buckets.begin() ;
+        ib != p_node_buckets.end() ; ++ib ) {
+    stk::mesh::Bucket & b = **ib ;
+    const stk::mesh::Bucket::size_type length   = b.size();
+    double * uNp1 = stk::mesh::field_data(velocityNp1, b);
+    double * ut = stk::mesh::field_data(*uTmp, b);
+    double * dp = stk::mesh::field_data(*dpdx, b);
+    double * rho = stk::mesh::field_data(densityNp1, b);
     
-    // process loop
-    for ( stk::mesh::BucketVector::const_iterator ib = p_node_buckets.begin() ;
-          ib != p_node_buckets.end() ; ++ib ) {
-      stk::mesh::Bucket & b = **ib ;
-      const stk::mesh::Bucket::size_type length   = b.size();
-      double * uNp1 = stk::mesh::field_data(velocityNp1, b);
-      double * ut = stk::mesh::field_data(*uTmp, b);
-      double * dp = stk::mesh::field_data(*dpdx, b);
-      double * rho = stk::mesh::field_data(densityNp1, b);
+    for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
       
-      for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
-        
-        // Get scaling factor
-        const double fac = projTimeScale/rho[k];
-        
-        // projection step
-        const size_t offSet = k*nDim;
-        for ( int j = 0; j < nDim; ++j ) {
-          const double gdpx = dp[offSet+j] - ut[offSet+j];
-          uNp1[offSet+j] -= fac*gdpx;
-        }
+      // Get scaling factor
+      const double fac = projTimeScale/rho[k];
+      
+      // projection step
+      const size_t offSet = k*nDim;
+      for ( int j = 0; j < nDim; ++j ) {
+        const double gdpx = dp[offSet+j] - ut[offSet+j];
+        uNp1[offSet+j] -= fac*gdpx;
       }
     }
   }
@@ -774,12 +872,9 @@ LowMachEquationSystem::post_converged_work()
 //-------- constructor -----------------------------------------------------
 //--------------------------------------------------------------------------
 MomentumEquationSystem::MomentumEquationSystem(
-  EquationSystems& eqSystems,
-  const bool manageUcorr)
+  EquationSystems& eqSystems)
   : EquationSystem(eqSystems, "MomentumEQS"),
-    manageUcorr_(manageUcorr),
     velocity_(NULL),
-    provisionalVelocity_(NULL),
     dudx_(NULL),
     coordinates_(NULL),
     uTmp_(NULL),
@@ -790,8 +885,7 @@ MomentumEquationSystem::MomentumEquationSystem(
     diffFluxCoeffAlgDriver_(new AlgorithmDriver(realm_)),
     tviscAlgDriver_(new AlgorithmDriver(realm_)),
     cflReyAlgDriver_(new AlgorithmDriver(realm_)),
-    wallFunctionParamsAlgDriver_(NULL),
-    uCorrEqs_(NULL)
+    wallFunctionParamsAlgDriver_(NULL)
 {
   // extract solver name and solver object
   std::string solverName = realm_.equationSystems_.get_solver_block_name("velocity");
@@ -804,11 +898,6 @@ MomentumEquationSystem::MomentumEquationSystem(
 
   // push back EQ to manager
   realm_.equationSystems_.push_back(this);
-
-  // create u corection equation system
-  if ( manageUcorr_ ) {
-    uCorrEqs_ = new VelocityCorrectionEquationSystem(eqSystems);
-  }
 }
 
 //--------------------------------------------------------------------------
@@ -864,12 +953,6 @@ MomentumEquationSystem::register_nodal_fields(
   velocity_ =  &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity", numStates));
   stk::mesh::put_field(*velocity_, *part, nDim);
   realm_.augment_restart_variable_list("velocity");
-
-  // may require provisional velocity
-  if ( manageUcorr_ ) {
-    provisionalVelocity_ =  &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "provisional_velocity"));
-    stk::mesh::put_field(*provisionalVelocity_, *part, nDim);
-  }
 
   dudx_ =  &(meta_data.declare_field<GenericFieldType>(stk::topology::NODE_RANK, "dudx"));
   stk::mesh::put_field(*dudx_, *part, nDim*nDim);
@@ -984,7 +1067,7 @@ MomentumEquationSystem::register_interior_algorithm(
     }
     solverAlgDriver_->solverAlgMap_[algType] = theAlg;
     
-    // look for mass
+    // look for mass/src
     std::map<std::string, std::vector<std::string> >::iterator isrc 
       = realm_.solutionOptions_->elemSrcTermsMap_.find("momentum");
     if ( isrc != realm_.solutionOptions_->elemSrcTermsMap_.end() ) {
@@ -994,16 +1077,23 @@ MomentumEquationSystem::register_interior_algorithm(
         if (sourceName == "momentum_time_derivative" ) {
           useCMM = true;
           if ( realm_.number_of_states() == 2 ) {
-            throw std::runtime_error("ElemSrcTermsError::only BBF2 CMM");
+            MomentumMassBackwardEulerElemSuppAlg *theSrc
+              = new MomentumMassBackwardEulerElemSuppAlg(realm_);
+            theAlg->supplementalAlg_.push_back(theSrc);
           }
           else {
-            MomentumMassBDF2ElemSuppAlg *theMass
+            MomentumMassBDF2ElemSuppAlg *theSrc
               = new MomentumMassBDF2ElemSuppAlg(realm_);
-            theAlg->supplementalAlg_.push_back(theMass);
+            theAlg->supplementalAlg_.push_back(theSrc);
           } 
         }
+        else if (sourceName == "SteadyTaylorVortex" ) {
+          SteadyTaylorVortexMomentumSrcElemSuppAlg *theSrc
+            = new SteadyTaylorVortexMomentumSrcElemSuppAlg(realm_);
+          theAlg->supplementalAlg_.push_back(theSrc); 
+        }
         else {
-          throw std::runtime_error("ElemSrcTermsError::only support CMM");
+          throw std::runtime_error("ElemSrcTermsError::only support CMM and SteadyTV");
         }
       }
     }
@@ -1062,6 +1152,9 @@ MomentumEquationSystem::register_interior_algorithm(
         }
         else if ( sourceName == "gcl") {
           suppAlg = new MomentumGclSrcNodeSuppAlg(realm_);
+        }
+        else if (sourceName == "SteadyTaylorVortex" ) {
+          suppAlg = new SteadyTaylorVortexMomentumSrcNodeSuppAlg(realm_);
         }
         else {
           throw std::runtime_error("MomentumEquationSystem::only buoyancy, buoyancy_boussinesq, body force or gcl are supported");
@@ -1171,6 +1264,9 @@ MomentumEquationSystem::register_inflow_bc(
     // switch on the name found...
     if ( fcnName == "convecting_taylor_vortex" ) {
       theAuxFunc = new ConvectingTaylorVortexVelocityAuxFunction(0,nDim);
+    }
+    else if ( fcnName == "SteadyTaylorVortex" ) {
+      theAuxFunc = new SteadyTaylorVortexVelocityAuxFunction(0,nDim);
     }
     else {
       throw std::runtime_error("MomentumEquationSystem::register_inflow_bc: Only convecting_tv supported");
@@ -1686,15 +1782,6 @@ MomentumEquationSystem::compute_wall_function_params()
   }
 }
 
-//--------------------------------------------------------------------------
-//-------- compute_u_correction --------------------------------------------
-//--------------------------------------------------------------------------
-void
-MomentumEquationSystem::compute_u_correction()
-{
-  uCorrEqs_->solve_and_update_external();
-}
-
 //==========================================================================
 // Class Definition
 //==========================================================================
@@ -1893,12 +1980,30 @@ ContinuityEquationSystem::register_interior_algorithm(
       AssembleContinuityElemSolverAlgorithm *theAlg
         = new AssembleContinuityElemSolverAlgorithm(realm_, part, this);
       solverAlgDriver_->solverAlgMap_[algType] = theAlg;
+
+      // look for src
+      std::map<std::string, std::vector<std::string> >::iterator isrc 
+        = realm_.solutionOptions_->elemSrcTermsMap_.find("continuity");
+      if ( isrc != realm_.solutionOptions_->elemSrcTermsMap_.end() ) {
+        std::vector<std::string> mapNameVec = isrc->second;
+        for (size_t k = 0; k < mapNameVec.size(); ++k ) {
+          std::string sourceName = mapNameVec[k];
+          if (sourceName == "SteadyTaylorVortex" ) {
+            SteadyTaylorVortexContinuitySrcElemSuppAlg *theSrc
+              = new SteadyTaylorVortexContinuitySrcElemSuppAlg(realm_);
+            theAlg->supplementalAlg_.push_back(theSrc); 
+          }
+          else {
+            throw std::runtime_error("ElemSrcTermsError::only support SteadyTV");
+          }
+        }
+      }
     }
     else {
       its->second->partVec_.push_back(part);
     }
   }
-
+  
   // time term using lumped mass
   std::map<std::string, std::vector<std::string> >::iterator isrc =
     realm_.solutionOptions_->srcTermsMap_.find("continuity");
@@ -1997,6 +2102,9 @@ ContinuityEquationSystem::register_inflow_bc(
     // switch on the name found...
     if ( fcnName == "convecting_taylor_vortex" ) {
       theAuxFunc = new ConvectingTaylorVortexVelocityAuxFunction(0,nDim);
+    }
+    else if ( fcnName == "SteadyTaylorVortex" ) {
+      theAuxFunc = new SteadyTaylorVortexVelocityAuxFunction(0,nDim);
     }
     else {
       throw std::runtime_error("ContEquationSystem::register_inflow_bc: Only convecting_tv supported");
@@ -2376,9 +2484,12 @@ ContinuityEquationSystem::register_initial_condition_fcn(
     std::string fcnName = (*iterName).second;
     AuxFunction *theAuxFunc = NULL;
     if ( fcnName == "convecting_taylor_vortex" ) {
-      
       // create the function
       theAuxFunc = new ConvectingTaylorVortexPressureAuxFunction();      
+    }
+    else if ( fcnName == "SteadyTaylorVortex" ) {
+      // create the function
+      theAuxFunc = new SteadyTaylorVortexPressureAuxFunction();      
     }
     else {
       throw std::runtime_error("ContinuityEquationSystem::register_initial_condition_fcn: Conv_tv only supported");

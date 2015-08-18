@@ -72,6 +72,11 @@ public:
     stk::mesh::Part *part,
     const stk::topology &theTopo);
 
+  virtual void register_initial_condition_fcn(
+      stk::mesh::Part *part,
+      const std::map<std::string, std::string> &theNames,
+      const std::map<std::string, std::vector<double> > &theParams);
+
   void initialize();
   void reinitialize_linear_system();
   
@@ -81,6 +86,7 @@ public:
   void update_and_clip();
   void compute_scalar_var_diss();
   void post_iter_work();
+  void compute_norm();
 
   ScalarFieldType *mixFrac_;
   VectorFieldType *dzdx_;

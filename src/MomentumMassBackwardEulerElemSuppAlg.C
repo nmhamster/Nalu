@@ -6,7 +6,7 @@
 /*------------------------------------------------------------------------*/
 
 
-#include <MomentumMassBDF2ElemSuppAlg.h>
+#include <MomentumMassBackwardEulerElemSuppAlg.h>
 #include <SupplementalAlgorithm.h>
 #include <FieldTypeDef.h>
 #include <Realm.h>
@@ -24,45 +24,37 @@ namespace nalu{
 //==========================================================================
 // Class Definition
 //==========================================================================
-// MomentumMassBDF2ElemSuppAlg - base class for algorithm
+// MomentumMassBackwardEulerElemSuppAlg - base class for algorithm
 //==========================================================================
 //--------------------------------------------------------------------------
 //-------- constructor -----------------------------------------------------
 //--------------------------------------------------------------------------
-MomentumMassBDF2ElemSuppAlg::MomentumMassBDF2ElemSuppAlg(
+MomentumMassBackwardEulerElemSuppAlg::MomentumMassBackwardEulerElemSuppAlg(
   Realm &realm)
   : SupplementalAlgorithm(realm),
     bulkData_(&realm.bulk_data()),
-    velocityNm1_(NULL),
     velocityN_(NULL),
     velocityNp1_(NULL),
-    densityNm1_(NULL),
     densityN_(NULL),
     densityNp1_(NULL),
     Gjp_(NULL),
     scVolume_(NULL),
     dt_(0.0),
     nDim_(realm_.spatialDimension_),
-    gamma1_(0.0),
-    gamma2_(0.0),
-    gamma3_(0.0),
     useShifted_(false)
 {
   // save off fields
   stk::mesh::MetaData & meta_data = realm_.meta_data();
   VectorFieldType *velocity = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "velocity");
-  velocityNm1_ = &(velocity->field_of_state(stk::mesh::StateNM1));
   velocityN_ = &(velocity->field_of_state(stk::mesh::StateN));
   velocityNp1_ = &(velocity->field_of_state(stk::mesh::StateNP1));
   ScalarFieldType *density = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "density");
-  densityNm1_ = &(density->field_of_state(stk::mesh::StateNM1));
   densityN_ = &(density->field_of_state(stk::mesh::StateN));
   densityNp1_ = &(density->field_of_state(stk::mesh::StateNP1));
   Gjp_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, "dpdx");
   scVolume_ = meta_data.get_field<GenericFieldType>(stk::topology::ELEMENT_RANK, "sc_volume");
 
   // scratch vecs
-  uNm1Scv_.resize(nDim_);
   uNScv_.resize(nDim_);
   uNp1Scv_.resize(nDim_);
   GjpScv_.resize(nDim_);
@@ -72,7 +64,7 @@ MomentumMassBDF2ElemSuppAlg::MomentumMassBDF2ElemSuppAlg(
 //-------- elem_resize -----------------------------------------------------
 //--------------------------------------------------------------------------
 void
-MomentumMassBDF2ElemSuppAlg::elem_resize(
+MomentumMassBackwardEulerElemSuppAlg::elem_resize(
   MasterElement */*meSCS*/,
   MasterElement *meSCV)
 {
@@ -81,13 +73,11 @@ MomentumMassBDF2ElemSuppAlg::elem_resize(
 
   // resize
   ws_shape_function_.resize(numScvIp*nodesPerElement);
-  ws_uNm1_.resize(nDim_*nodesPerElement);
   ws_uN_.resize(nDim_*nodesPerElement);
   ws_uNp1_.resize(nDim_*nodesPerElement);
   ws_Gjp_.resize(nDim_*nodesPerElement);
-  ws_rhoNp1_.resize(nodesPerElement);
   ws_rhoN_.resize(nodesPerElement);
-  ws_rhoNm1_.resize(nodesPerElement);
+  ws_rhoNp1_.resize(nodesPerElement);
 
   // compute shape function
   if ( useShifted_ )
@@ -100,19 +90,16 @@ MomentumMassBDF2ElemSuppAlg::elem_resize(
 //-------- setup -----------------------------------------------------------
 //--------------------------------------------------------------------------
 void
-MomentumMassBDF2ElemSuppAlg::setup()
+MomentumMassBackwardEulerElemSuppAlg::setup()
 {
   dt_ = realm_.get_time_step();
-  gamma1_ = realm_.get_gamma1();
-  gamma2_ = realm_.get_gamma2();
-  gamma3_ = realm_.get_gamma3();
 }
 
 //--------------------------------------------------------------------------
 //-------- elem_execute ----------------------------------------------------
 //--------------------------------------------------------------------------
 void
-MomentumMassBDF2ElemSuppAlg::elem_execute(
+MomentumMassBackwardEulerElemSuppAlg::elem_execute(
   double *lhs,
   double *rhs,
   stk::mesh::Entity element,
@@ -137,20 +124,17 @@ MomentumMassBDF2ElemSuppAlg::elem_execute(
   for ( int ni = 0; ni < num_nodes; ++ni ) {
     stk::mesh::Entity node = node_rels[ni];
     // pointers to real data
-    const double * uNm1 = stk::mesh::field_data(*velocityNm1_, node );
     const double * uN = stk::mesh::field_data(*velocityN_, node );
     const double * uNp1 = stk::mesh::field_data(*velocityNp1_, node );
     const double * Gjp = stk::mesh::field_data(*Gjp_, node );
     
     // gather scalars
-    ws_rhoNm1_[ni] = *stk::mesh::field_data(*densityNm1_, node);
     ws_rhoN_[ni] = *stk::mesh::field_data(*densityN_, node);
     ws_rhoNp1_[ni] = *stk::mesh::field_data(*densityNp1_, node);
 
     // gather vectors
     const int niNdim = ni*nDim_;
     for ( int j=0; j < nDim_; ++j ) {
-      ws_uNm1_[niNdim+j] = uNm1[j];
       ws_uN_[niNdim+j] = uN[j];
       ws_uNp1_[niNdim+j] = uNp1[j];
       ws_Gjp_[niNdim+j] = Gjp[j];
@@ -163,11 +147,9 @@ MomentumMassBDF2ElemSuppAlg::elem_execute(
     const int nearestNode = ipNodeMap[ip];
     
     // zero out; scalar and vector
-    double rhoNm1Scv = 0.0;
     double rhoNScv = 0.0;
     double rhoNp1Scv = 0.0;
     for ( int j =0; j < nDim_; ++j ) {
-      uNm1Scv_[j] = 0.0;
       uNScv_[j] = 0.0;
       uNp1Scv_[j] = 0.0;
       GjpScv_[j] = 0.0;
@@ -179,14 +161,12 @@ MomentumMassBDF2ElemSuppAlg::elem_execute(
       const double r = ws_shape_function_[offSet+ic];
 
       // density
-      rhoNm1Scv += r*ws_rhoNm1_[ic];
       rhoNScv += r*ws_rhoN_[ic];
       rhoNp1Scv += r*ws_rhoNp1_[ic];
 
       // velocity
       const int icNdim = ic*nDim_;
       for ( int j = 0; j < nDim_; ++j ) {
-        uNm1Scv_[j] += r*ws_uNm1_[icNdim+j];
         uNScv_[j] += r*ws_uN_[icNdim+j];
         uNp1Scv_[j] += r*ws_uNp1_[icNdim+j];
         GjpScv_[j] += r*ws_Gjp_[icNdim+j];
@@ -198,8 +178,8 @@ MomentumMassBDF2ElemSuppAlg::elem_execute(
     const int nnNdim = nearestNode*nDim_;
     for ( int i = 0; i < nDim_; ++i ) {
       rhs[nnNdim+i] += 
-        -(gamma1_*rhoNp1Scv*uNp1Scv_[i] + gamma2_*rhoNScv*uNScv_[i] + gamma3_*rhoNm1Scv*uNm1Scv_[i])*scV/dt_
-        -GjpScv_[i]*scV; //ws_Gjp_[nnNdim+i]*scV; 
+        -(rhoNp1Scv*uNp1Scv_[i]-rhoNScv*uNScv_[i])*scV/dt_
+        -GjpScv_[i]*scV; //- ws_Gjp_[nnNdim+i]*scV;
     }
     
     // manage LHS
@@ -210,7 +190,7 @@ MomentumMassBDF2ElemSuppAlg::elem_execute(
       // save off shape function
       const double r = ws_shape_function_[offSet+ic];
       
-      const double lhsfac = r*gamma1_*rhoNp1Scv*scV/dt_;
+      const double lhsfac = r*rhoNp1Scv*scV/dt_;
       
       for ( int i = 0; i < nDim_; ++i ) {
         const int indexNN = nnNdim + i;

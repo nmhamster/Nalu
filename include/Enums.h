@@ -52,7 +52,6 @@ enum EquationType {
   EQ_SPEC_DISS_RATE = 8,
   EQ_MASS_FRACTION = 9,
   EQ_PNG = 10,
-  EQ_UCORR = 11,
   EquationSystemType_END
 };
 
@@ -67,8 +66,7 @@ static const std::string EquationTypeMap[] = {
   "MeshVelocity",
   "Specific_Dissipation_Rate",
   "Mass_Fraction",
-  "PNG",
-  "UCORR"
+  "PNG"
 };
 
 enum UserDataType {

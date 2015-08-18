@@ -29,7 +29,6 @@ class ContinuityEquationSystem;
 class LinearSystem;
 class ProjectedNodalGradientEquationSystem;
 class SurfaceForceAndMomentAlgorithmDriver;
-class VelocityCorrectionEquationSystem;
 
 class LowMachEquationSystem : public EquationSystem {
 
@@ -38,8 +37,7 @@ public:
   LowMachEquationSystem (
     EquationSystems& equationSystems,
     const bool elementContinuityEqs,
-    const bool managePNG = false,
-    const bool manageUcorr = false);
+    const bool managePNG = false);
   virtual ~LowMachEquationSystem();
   
   virtual void initialize();
@@ -74,6 +72,8 @@ public:
   virtual void solve_and_update();
   virtual void post_adapt_work();
 
+  void compute_norm();
+
   virtual void predict_state();
 
   void project_nodal_velocity();
@@ -101,8 +101,7 @@ class MomentumEquationSystem : public EquationSystem {
 public:
 
   MomentumEquationSystem(
-    EquationSystems& equationSystems,
-    const bool manageUcorr);
+    EquationSystems& equationSystems);
   virtual ~MomentumEquationSystem();
 
   virtual void initial_work();
@@ -155,13 +154,8 @@ public:
   virtual void predict_state();
 
   void compute_wall_function_params();
-  void compute_u_correction();
-
-  // allow for consistent mass matrix approach
-  const bool manageUcorr_;
-
+ 
   VectorFieldType *velocity_;
-  VectorFieldType *provisionalVelocity_;
   GenericFieldType *dudx_;
 
   VectorFieldType *coordinates_;
@@ -176,8 +170,6 @@ public:
   AlgorithmDriver *tviscAlgDriver_;
   AlgorithmDriver *cflReyAlgDriver_;
   AlgorithmDriver *wallFunctionParamsAlgDriver_;
-
-  VelocityCorrectionEquationSystem *uCorrEqs_;
 
   // saved of mesh parts that are not to be projected
   std::vector<stk::mesh::Part *> notProjectedPart_;

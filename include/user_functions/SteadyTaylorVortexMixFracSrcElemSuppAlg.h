@@ -6,8 +6,8 @@
 /*------------------------------------------------------------------------*/
 
 
-#ifndef MomentumMassBDF2ElemSuppAlg_h
-#define MomentumMassBDF2ElemSuppAlg_h
+#ifndef SteadyTaylorVortexMixFracSrcElemSuppAlg_h
+#define SteadyTaylorVortexMixFracSrcElemSuppAlg_h
 
 #include <SupplementalAlgorithm.h>
 #include <FieldTypeDef.h>
@@ -21,14 +21,14 @@ namespace nalu{
 class Realm;
 class MasterElement;
 
-class MomentumMassBDF2ElemSuppAlg : public SupplementalAlgorithm
+class SteadyTaylorVortexMixFracSrcElemSuppAlg : public SupplementalAlgorithm
 {
 public:
 
-  MomentumMassBDF2ElemSuppAlg(
+  SteadyTaylorVortexMixFracSrcElemSuppAlg(
     Realm &realm);
 
-  virtual ~MomentumMassBDF2ElemSuppAlg() {}
+  virtual ~SteadyTaylorVortexMixFracSrcElemSuppAlg() {}
 
   virtual void setup();
 
@@ -45,36 +45,31 @@ public:
   
   const stk::mesh::BulkData *bulkData_;
 
-  VectorFieldType *velocityNm1_;
-  VectorFieldType *velocityN_;
-  VectorFieldType *velocityNp1_;
-  ScalarFieldType *densityNm1_;
-  ScalarFieldType *densityN_;
-  ScalarFieldType *densityNp1_;
-  VectorFieldType *Gjp_;
+  VectorFieldType *coordinates_;
   GenericFieldType *scVolume_;
 
   double dt_;
   const int nDim_;
-  double gamma1_;
-  double gamma2_;
-  double gamma3_;
+  const double rhoP_;
+  const double rhoS_;
+  const double unot_;
+  const double vnot_;
+  const double znot_;
+  const double pnot_;
+  const double visc_;
+  const double a_;
+  const double amf_;
+  const double Sc_;  
+  const double pi_;
+
   const bool useShifted_;
 
-  // scratch space
-  std::vector<double> uNm1Scv_;
-  std::vector<double> uNScv_;
-  std::vector<double> uNp1Scv_;
-  std::vector<double> GjpScv_;
-
+  // scratch space (at constructor)
+  std::vector<double> scvCoords_;
+  std::vector<double> srcXi_;
+  // at elem_resize
   std::vector<double> ws_shape_function_;
-  std::vector<double> ws_uNm1_;
-  std::vector<double> ws_uN_;
-  std::vector<double> ws_uNp1_;
-  std::vector<double> ws_Gjp_;
-  std::vector<double> ws_rhoNm1_;
-  std::vector<double> ws_rhoN_;
-  std::vector<double> ws_rhoNp1_;
+  std::vector<double> ws_coordinates_;
 };
 
 } // namespace nalu
