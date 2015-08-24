@@ -88,7 +88,7 @@ public:
     throw std::runtime_error("adjacentNodes not implementedunknown bc");
     return NULL;}
 
-  virtual const int * ipNodeMap() {
+  virtual const int * ipNodeMap(int ordinal = 0) {
       throw std::runtime_error("ipNodeMap not implemented");
       return NULL;}
 
@@ -192,7 +192,7 @@ public:
   HexSCV();
   virtual ~HexSCV();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -210,6 +210,8 @@ public:
 
   HexSCS();
   virtual ~HexSCS();
+
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -306,7 +308,7 @@ public:
   Hex27SCV();
   ~Hex27SCV();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -361,7 +363,7 @@ public:
   TetSCV();
   virtual ~TetSCV();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -377,6 +379,8 @@ public:
 
   TetSCS();
   virtual ~TetSCS();
+
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -450,7 +454,7 @@ public:
   PyrSCV();
   virtual ~PyrSCV();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -518,7 +522,7 @@ public:
   WedSCV();
   virtual ~WedSCV();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -533,6 +537,8 @@ class WedSCS : public MasterElement
 public:
   WedSCS();
   virtual ~WedSCS();
+
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -597,7 +603,7 @@ public:
   Quad2DSCV();
   virtual ~Quad2DSCV();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -612,6 +618,8 @@ class Quad2DSCS : public MasterElement
 public:
   Quad2DSCS();
   virtual ~Quad2DSCS();
+
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -707,7 +715,7 @@ public:
   Quad92DSCV();
   ~Quad92DSCV();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -745,6 +753,8 @@ class Quad92DSCS : public MasterElement
 public:
   Quad92DSCS();
   ~Quad92DSCS();
+
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -815,7 +825,7 @@ public:
   Tri2DSCV();
   virtual ~Tri2DSCV();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -831,6 +841,8 @@ class Tri2DSCS : public MasterElement
 public:
   Tri2DSCS();
   virtual ~Tri2DSCS();
+
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -919,7 +931,7 @@ public:
   Quad3DSCS();
   virtual ~Quad3DSCS();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -970,7 +982,7 @@ public:
   Quad93DSCS();
   virtual ~Quad93DSCS();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -1003,7 +1015,7 @@ public:
   Tri3DSCS();
   virtual ~Tri3DSCS();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -1050,7 +1062,7 @@ public:
   Edge2DSCS();
   virtual ~Edge2DSCS();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,
@@ -1092,7 +1104,7 @@ public:
   Edge32DSCS();
   virtual ~Edge32DSCS();
 
-  const int * ipNodeMap();
+  const int * ipNodeMap(int ordinal = 0);
 
   void determinant(
     const int nelem,

@@ -65,7 +65,6 @@ HexSCV::HexSCV()
   ipNodeMap_.resize(8);
   ipNodeMap_[0] = 0; ipNodeMap_[1] = 1; ipNodeMap_[2] = 2; ipNodeMap_[3] = 3;
   ipNodeMap_[4] = 4; ipNodeMap_[5] = 5; ipNodeMap_[6] = 6; ipNodeMap_[7] = 7;
-
 }
 
 //--------------------------------------------------------------------------
@@ -80,7 +79,8 @@ HexSCV::~HexSCV()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-HexSCV::ipNodeMap()
+HexSCV::ipNodeMap(
+  int /*ordinal*/)
 {
   // define scv->node mappings
   return &ipNodeMap_[0];
@@ -220,7 +220,22 @@ HexSCS::HexSCS()
   intgExpFace_[63] =  0.25; intgExpFace_[64] = -0.25; intgExpFace_[65] =  0.50;
   intgExpFace_[66] =  0.25; intgExpFace_[67] =  0.25; intgExpFace_[68] =  0.50;
   intgExpFace_[69] = -0.25; intgExpFace_[70] =  0.25; intgExpFace_[71] =  0.50;  
-  
+
+  // boundary integration point ip node mapping (ip on an ordinal to local node number)
+  ipNodeMap_.resize(24); // 4 ips * 6 faces
+  // face 0;
+  ipNodeMap_[0] = 0;  ipNodeMap_[1] = 1;  ipNodeMap_[2] = 5;  ipNodeMap_[3] = 4; 
+  // face 1; 
+  ipNodeMap_[4] = 1;  ipNodeMap_[5] = 2;  ipNodeMap_[6] = 6;  ipNodeMap_[7] = 5; 
+  // face 2;
+  ipNodeMap_[8] = 2;  ipNodeMap_[9] = 3;  ipNodeMap_[10] = 7; ipNodeMap_[11] = 6; 
+  // face 3;
+  ipNodeMap_[12] = 0; ipNodeMap_[13] = 4; ipNodeMap_[14] = 7; ipNodeMap_[15] = 3; 
+  // face 4;
+  ipNodeMap_[16] = 0; ipNodeMap_[17] = 3; ipNodeMap_[18] = 2; ipNodeMap_[19] = 1; 
+  // face 5;
+  ipNodeMap_[20] = 4; ipNodeMap_[21] = 5; ipNodeMap_[22] = 6; ipNodeMap_[23] = 7; 
+
   // nodes for collocation calculations
   nodeLoc_.resize(24);
   // node 0
@@ -292,6 +307,17 @@ HexSCS::HexSCS()
 HexSCS::~HexSCS()
 {
   // does nothing
+}
+
+//--------------------------------------------------------------------------
+//-------- ipNodeMap -------------------------------------------------------
+//--------------------------------------------------------------------------
+const int *
+HexSCS::ipNodeMap(
+  int ordinal)
+{
+  // define ip->node mappings for each face (ordinal); 
+  return &ipNodeMap_[ordinal*4];
 }
 
 //--------------------------------------------------------------------------
@@ -955,7 +981,8 @@ Hex27SCV::~Hex27SCV()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-Hex27SCV::ipNodeMap()
+Hex27SCV::ipNodeMap(
+  int /*ordinal*/)
 {
   // define scv->node mappings
   return &ipNodeMap_[0];
@@ -1160,7 +1187,8 @@ TetSCV::~TetSCV()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-TetSCV::ipNodeMap()
+TetSCV::ipNodeMap(
+  int /*ordinal*/)
 {
   // define scv->node mappings
   return &ipNodeMap_[0];
@@ -1264,6 +1292,16 @@ TetSCS::TetSCS()
   intgExpFace_[30] = seven12ths; intgExpFace_[31] = five24ths;  intgExpFace_[32] =  0.00;
   intgExpFace_[33] = five24ths;  intgExpFace_[34] = seven12ths; intgExpFace_[35] =  0.00;
 
+  // boundary integration point ip node mapping (ip on an ordinal to local node number)
+  ipNodeMap_.resize(12); // 3 ips * 4 faces
+  // face 0;
+  ipNodeMap_[0] = 0;  ipNodeMap_[1] = 1;  ipNodeMap_[2] = 3; 
+  // face 1; 
+  ipNodeMap_[3] = 1;  ipNodeMap_[4] = 2;  ipNodeMap_[5] = 3; 
+  // face 2;
+  ipNodeMap_[6] = 0;  ipNodeMap_[7] = 3;  ipNodeMap_[8] = 2;  
+  // face 3;
+  ipNodeMap_[9] = 0; ipNodeMap_[10] = 2; ipNodeMap_[11] = 1;
 }
 
 //--------------------------------------------------------------------------
@@ -1272,6 +1310,17 @@ TetSCS::TetSCS()
 TetSCS::~TetSCS()
 {
   // does nothing
+}
+
+//--------------------------------------------------------------------------
+//-------- ipNodeMap -------------------------------------------------------
+//--------------------------------------------------------------------------
+const int *
+TetSCS::ipNodeMap(
+  int ordinal)
+{
+  // define ip->node mappings for each face (ordinal); 
+  return &ipNodeMap_[ordinal*3];
 }
 
 //--------------------------------------------------------------------------
@@ -1569,7 +1618,8 @@ PyrSCV::~PyrSCV()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-PyrSCV::ipNodeMap()
+PyrSCV::ipNodeMap(
+  int /*ordinal*/)
 {
   // define scv->node mappings
   return &ipNodeMap_[0];
@@ -1864,7 +1914,8 @@ WedSCV::~WedSCV()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-WedSCV::ipNodeMap()
+WedSCV::ipNodeMap(
+  int /*ordinal*/)
 {
   // define scv->node mappings
   return &ipNodeMap_[0];
@@ -1965,26 +2016,39 @@ WedSCS::WedSCS()
 
   // exposed face
   intgExpFace_.resize(60);
-  intgExpFace_[0] = 0.25;       intgExpFace_[1]  = 0.0;       intgExpFace_[2] = -0.5;  // surf 0,  nodes 0,1,4,3
+  intgExpFace_[0] = 0.25;       intgExpFace_[1]  = 0.0;       intgExpFace_[2] = -0.5;  // surf 0; nodes 0,1,4,3
   intgExpFace_[3] = 0.75;       intgExpFace_[4]  = 0.0;       intgExpFace_[5] = -0.5;  // face 0, surf 1
   intgExpFace_[6] = 0.75;       intgExpFace_[7]  = 0.0;       intgExpFace_[8] =  0.5;  // face 0, surf 2
   intgExpFace_[9] = 0.25;       intgExpFace_[10] = 0.0;       intgExpFace_[11] = 0.5;  // face 0, surf 3
-  intgExpFace_[12] = 0.75;      intgExpFace_[13] = 0.25;      intgExpFace_[14] = -0.5; // surf 0,  nodes 1,2,5,4
+  intgExpFace_[12] = 0.75;      intgExpFace_[13] = 0.25;      intgExpFace_[14] = -0.5; // surf 1; nodes 1,2,5,4
   intgExpFace_[15] = 0.25;      intgExpFace_[16] = 0.75;      intgExpFace_[17] = -0.5; // face 1, surf 1
   intgExpFace_[18] = 0.25;      intgExpFace_[19] = 0.75;      intgExpFace_[20] =  0.5; // face 1, surf 2
   intgExpFace_[21] = 0.75;      intgExpFace_[22] = 0.25;      intgExpFace_[23] =  0.5; // face 1, surf 3
-  intgExpFace_[24] = 0.0;       intgExpFace_[25] = 0.25;      intgExpFace_[26] = -0.5; // surf 0   nodes 0,3,5,2
+  intgExpFace_[24] = 0.0;       intgExpFace_[25] = 0.25;      intgExpFace_[26] = -0.5; // surf 2; nodes 0,3,5,2
   intgExpFace_[27] = 0.0;       intgExpFace_[28] = 0.25;      intgExpFace_[29] =  0.5; // face 2, surf 1
   intgExpFace_[30] = 0.0;       intgExpFace_[31] = 0.75;      intgExpFace_[32] =  0.5; // face 2, surf 2
   intgExpFace_[33] = 0.0;       intgExpFace_[34] = 0.75;      intgExpFace_[35] = -0.5; // face 2, surf 3
-  intgExpFace_[36] = five24th;  intgExpFace_[37] = five24th;  intgExpFace_[38] = -1.0; // surf 0   nodes 0,2,1
+  intgExpFace_[36] = five24th;  intgExpFace_[37] = five24th;  intgExpFace_[38] = -1.0; // surf 3; nodes 0,2,1
   intgExpFace_[39] = five24th;  intgExpFace_[40] = seven12th; intgExpFace_[41] = -1.0; // face 3, surf 1
   intgExpFace_[42] = seven12th; intgExpFace_[43] = five24th;  intgExpFace_[44] = -1.0; // face 3, surf 2
   intgExpFace_[45] = 0.0;       intgExpFace_[46] = 0.0;       intgExpFace_[47] =  0.0; // (blank)
-  intgExpFace_[48] = five24th;  intgExpFace_[49] = five24th;  intgExpFace_[50] = 1.0;  // surf 0   nodes 3,4,5
+  intgExpFace_[48] = five24th;  intgExpFace_[49] = five24th;  intgExpFace_[50] = 1.0;  // surf 4; nodes 3,4,5
   intgExpFace_[51] = seven12th; intgExpFace_[52] = five24th;  intgExpFace_[53] = 1.0;  // face 4, surf 1
   intgExpFace_[54] = five24th;  intgExpFace_[55] = seven12th; intgExpFace_[56] = 1.0;  // face 4, surf 2
   intgExpFace_[57] = 0.0;       intgExpFace_[58] = 0.0;       intgExpFace_[59] = 0.0;  // (blank)
+
+  // boundary integration point ip node mapping (ip on an ordinal to local node number)
+  ipNodeMap_.resize(20); // 4 ips (pick quad) * 5 faces
+  // face 0;
+  ipNodeMap_[0] = 0;  ipNodeMap_[1] = 1;  ipNodeMap_[2] = 4;  ipNodeMap_[3] = 3; 
+  // face 1; 
+  ipNodeMap_[4] = 1;  ipNodeMap_[5] = 2;  ipNodeMap_[6] = 5;  ipNodeMap_[7] = 4; 
+  // face 2;
+  ipNodeMap_[8] = 0;  ipNodeMap_[9] = 3;  ipNodeMap_[10] = 5; ipNodeMap_[11] = 2; 
+  // face 3;
+  ipNodeMap_[12] = 0; ipNodeMap_[13] = 1; ipNodeMap_[14] = 1; ipNodeMap_[15] = 0; //empty 
+  // face 4;
+  ipNodeMap_[16] = 3; ipNodeMap_[17] = 4; ipNodeMap_[18] = 5; ipNodeMap_[19] = 0; // empty 
 }
 
 //--------------------------------------------------------------------------
@@ -1993,6 +2057,17 @@ WedSCS::WedSCS()
 WedSCS::~WedSCS()
 {
   // does nothing
+}
+
+//--------------------------------------------------------------------------
+//-------- ipNodeMap -------------------------------------------------------
+//--------------------------------------------------------------------------
+const int *
+WedSCS::ipNodeMap(
+  int ordinal)
+{
+  // define ip->node mappings for each face (ordinal); 
+  return &ipNodeMap_[ordinal*4];
 }
 
 //--------------------------------------------------------------------------
@@ -2255,7 +2330,8 @@ Quad2DSCV::~Quad2DSCV()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-Quad2DSCV::ipNodeMap()
+Quad2DSCV::ipNodeMap(
+  int /*ordinal*/)
 {
   // define scv->node mappings
   return &ipNodeMap_[0];
@@ -2346,6 +2422,17 @@ Quad2DSCS::Quad2DSCS()
   intgExpFace_[12] = -0.50; intgExpFace_[13] =  0.25;
   intgExpFace_[14] = -0.50; intgExpFace_[15] = -0.25; 
 
+  // boundary integration point ip node mapping (ip on an ordinal to local node number)
+  ipNodeMap_.resize(8); // 2 ips * 4 faces
+  // face 0;
+  ipNodeMap_[0] = 0;  ipNodeMap_[1] = 1;  
+  // face 1;
+  ipNodeMap_[2] = 1;  ipNodeMap_[3] = 2; 
+  // face 2; 
+  ipNodeMap_[4] = 2;  ipNodeMap_[5] = 3;  
+  // face 3;
+  ipNodeMap_[6] = 3;  ipNodeMap_[7] = 0; 
+  
   // mapping between exposed face and extruded element's overlapping face   
   faceNodeOnExtrudedElem_.resize(8);
   faceNodeOnExtrudedElem_[0] = 1; faceNodeOnExtrudedElem_[1] = 0;
@@ -2385,6 +2472,17 @@ Quad2DSCS::Quad2DSCS()
 Quad2DSCS::~Quad2DSCS()
 {
   // does nothing
+}
+
+//--------------------------------------------------------------------------
+//-------- ipNodeMap -------------------------------------------------------
+//--------------------------------------------------------------------------
+const int *
+Quad2DSCS::ipNodeMap(
+  int ordinal)
+{
+  // define ip->node mappings for each face (ordinal); 
+  return &ipNodeMap_[ordinal*2];
 }
 
 //--------------------------------------------------------------------------
@@ -2936,7 +3034,8 @@ Quad92DSCV::~Quad92DSCV()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-Quad92DSCV::ipNodeMap()
+Quad92DSCV::ipNodeMap(
+  int /*ordinal*/)
 {
  // define scv->node mappings
  return &ipNodeMap_[0];
@@ -3167,11 +3266,29 @@ Quad92DSCS::Quad92DSCS()
   lrscv_[44] = 2; lrscv_[45] = 5;
   lrscv_[46] = 3; lrscv_[47] = 7;
 
-  // define opposing node; BAD BAD BAD
-  oppNode_.resize(12);
+  // define opposing node
+  oppNode_.resize(24);
+  
+  // face 0; nodes 0,4,1
+  oppNode_[0] = 7;  oppNode_[1] = 7;  oppNode_[2] = 8;  oppNode_[3] = 8;  oppNode_[4] = 5;  oppNode_[5] = 5;
+  // face 1; nodes 1,5,2
+  oppNode_[6] = 4;  oppNode_[7] = 4;  oppNode_[8] = 8;  oppNode_[9] = 8;  oppNode_[10] = 6; oppNode_[11] = 6;
+  // face 2; nodes 2,6,3
+  oppNode_[12] = 5; oppNode_[13] = 5; oppNode_[14] = 8; oppNode_[15] = 8; oppNode_[16] = 7; oppNode_[17] = 7;
+  // face 3; nodes 3,7,0
+  oppNode_[18] = 6; oppNode_[19] = 6; oppNode_[20] = 8; oppNode_[21] = 8; oppNode_[22] = 4; oppNode_[23] = 4;
 
-  // define opposing face; BAD BAD BAD
-  oppFace_.resize(12);
+  // define opposing face
+  oppFace_.resize(24);
+
+  // face 0
+  oppFace_[0] = 20;  oppFace_[1] = 3;   oppFace_[2] = 1;   oppFace_[3] = 7;   oppFace_[4] = 5;   oppFace_[5] = 21;
+  // face 1
+  oppFace_[6] = 17;  oppFace_[7] = 4;   oppFace_[8] = 6;   oppFace_[9] = 8;   oppFace_[10] = 10; oppFace_[11] = 18;
+  // face 2
+  oppFace_[12] = 22; oppFace_[13] = 9;  oppFace_[14] = 11; oppFace_[15] = 13; oppFace_[16] = 15; oppFace_[17] = 23;
+  // face 3
+  oppFace_[18] = 19; oppFace_[19] = 14; oppFace_[20] = 12; oppFace_[21] = 2;  oppFace_[22] = 0;  oppFace_[23] = 16;
 
   // standard integration location
   intgLoc_.resize(48);
@@ -3214,8 +3331,50 @@ Quad92DSCS::Quad92DSCS()
   // shifted; na
   intgLocShift_.resize(48);
 
-  // exposed face; na
-  intgExpFace_.resize(12);
+  // exposed face
+  intgExpFace_.resize(48);
+  // face 0; scs 0, 1, 2, 3, 4, 5; nodes 0,4,1; fixed y of -1
+  intgExpFace_[0]  = Loc0; intgExpFace_[1]  = -1.0;
+  intgExpFace_[2]  = Loc1; intgExpFace_[3]  = -1.0;
+  intgExpFace_[4]  = Loc2; intgExpFace_[5]  = -1.0;
+  intgExpFace_[6]  = Loc3; intgExpFace_[7]  = -1.0;
+  intgExpFace_[8]  = Loc4; intgExpFace_[9]  = -1.0;
+  intgExpFace_[10] = Loc5; intgExpFace_[11] = -1.0;
+ 
+  // face 1; nodes 1,5,2; fixed x of +1
+  intgExpFace_[12] = +1.0; intgExpFace_[13]  = Loc0;
+  intgExpFace_[14] = +1.0; intgExpFace_[15]  = Loc1;
+  intgExpFace_[16] = +1.0; intgExpFace_[17]  = Loc2;
+  intgExpFace_[18] = +1.0; intgExpFace_[19]  = Loc3;
+  intgExpFace_[20] = +1.0; intgExpFace_[21]  = Loc4;
+  intgExpFace_[22] = +1.0; intgExpFace_[23]  = Loc5;
+
+  // face 2, surf 0, 1; nodes 2,6,3; fixed y of +1.0
+  intgExpFace_[24] = Loc5; intgExpFace_[25]  = +1.0;
+  intgExpFace_[26] = Loc4; intgExpFace_[27]  = +1.0;
+  intgExpFace_[28] = Loc3; intgExpFace_[29]  = +1.0;
+  intgExpFace_[30] = Loc2; intgExpFace_[31]  = +1.0;
+  intgExpFace_[32] = Loc1; intgExpFace_[33]  = +1.0;
+  intgExpFace_[34] = Loc0; intgExpFace_[35]  = +1.0;
+
+  // face 3, surf 0, 1; nodes 3,7,0; fixed x of -1.0
+  intgExpFace_[36] = -1.0; intgExpFace_[37]  = Loc5;
+  intgExpFace_[38] = -1.0; intgExpFace_[39]  = Loc4;
+  intgExpFace_[40] = -1.0; intgExpFace_[41]  = Loc3;
+  intgExpFace_[42] = -1.0; intgExpFace_[43]  = Loc2;
+  intgExpFace_[44] = -1.0; intgExpFace_[45]  = Loc1;
+  intgExpFace_[46] = -1.0; intgExpFace_[47]  = Loc0;
+
+  // boundary integration point ip node mapping (ip on an ordinal to local node number)
+  ipNodeMap_.resize(24); // 6 ips * 4 faces
+  // face 0;
+  ipNodeMap_[0] = 0; ipNodeMap_[1] = 0; ipNodeMap_[2] = 4; ipNodeMap_[3] = 4; ipNodeMap_[4] = 1;  ipNodeMap_[5] = 1;  
+  // face 1;
+  ipNodeMap_[6] = 1;  ipNodeMap_[7] = 1; ipNodeMap_[8] = 5;  ipNodeMap_[9] = 5; ipNodeMap_[10] = 2;  ipNodeMap_[11] = 2; 
+  // face 2; 
+  ipNodeMap_[12] = 2;  ipNodeMap_[13] = 2; ipNodeMap_[14] = 6;  ipNodeMap_[15] = 6; ipNodeMap_[16] = 3;  ipNodeMap_[17] = 3; 
+  // face 3;
+  ipNodeMap_[18] = 3;  ipNodeMap_[19] = 3; ipNodeMap_[20] = 7;  ipNodeMap_[21] = 7; ipNodeMap_[22] = 0;  ipNodeMap_[23] = 0; 
 
   // Surface integration info
   // Save the direction of the integration (e.g. if constant s or constant t),
@@ -3255,6 +3414,17 @@ Quad92DSCS::Quad92DSCS()
 Quad92DSCS::~Quad92DSCS()
 {
   // does nothing
+}
+
+//--------------------------------------------------------------------------
+//-------- ipNodeMap -------------------------------------------------------
+//--------------------------------------------------------------------------
+const int *
+Quad92DSCS::ipNodeMap(
+  int ordinal)
+{
+  // define ip->node mappings for each face (ordinal); 
+  return &ipNodeMap_[ordinal*6];
 }
 
 //--------------------------------------------------------------------------
@@ -3354,7 +3524,40 @@ void Quad92DSCS::face_grad_op(
   double *det_j,
   double *error)
 {
-  std::cout << "Big warning in Quad92DSCV::face_grad_op....." << std::endl;
+  int lerr = 0;
+  int nip = 6;
+  int ndim = 2;
+
+  const int nface = 1;
+  // dimension is ndim*npe*nip = 2*9*1 = 18 (one integration point at a time)
+  double dpsi[18];
+  double grad[18];
+
+  for ( int n=0; n<nelem; n++ ) {
+    
+    for ( int k=0; k<nip; k++ ) {
+      
+      // ndim*nip = 2*6 = 12
+      const int row = 12*face_ordinal + k*ndim;
+      SIERRA_FORTRAN(quad92d_derivative)
+        ( &nface, &intgExpFace_[row], dpsi );
+      
+      // ndim*npe = 2*9 = 18
+      SIERRA_FORTRAN(quad_gradient_operator)
+        ( &nface,
+          &nodesPerElement_,
+          &nface,
+          dpsi,
+          &coords[18*n], grad, &det_j[nip*n+k], error, &lerr );
+      
+      if ( lerr )
+        std::cout << "sorry, issue with face_grad_op.." << std::endl;
+      
+      for ( int j=0; j<18; j++) {
+        gradop[k*nelem*18+n*18+j] = grad[j];
+      }
+    }
+  }
 }
 
 //--------------------------------------------------------------------------
@@ -3375,7 +3578,7 @@ Quad92DSCS::opposingNodes(
   const int ordinal,
   const int node)
 {
-  return oppNode_[ordinal*2+node];
+  return oppNode_[ordinal*6+node];
 }
 
 //--------------------------------------------------------------------------
@@ -3386,7 +3589,7 @@ Quad92DSCS::opposingFace(
   const int ordinal,
   const int node)
 {
-  return oppFace_[ordinal*2+node];
+  return oppFace_[ordinal*6+node];
 }
 
 //--------------------------------------------------------------------------
@@ -3538,7 +3741,8 @@ Tri2DSCV::~Tri2DSCV()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-Tri2DSCV::ipNodeMap()
+Tri2DSCV::ipNodeMap(
+  int /*ordinal*/)
 {
   // define scv->node mappings
   return &ipNodeMap_[0];
@@ -3619,6 +3823,15 @@ Tri2DSCS::Tri2DSCS()
   // face 2, surf 0, 1; nodes 2,0
   intgExpFace_[8]  = 0.00; intgExpFace_[9]  = 0.75;
   intgExpFace_[10] = 0.00; intgExpFace_[11] = 0.25;
+  
+  // boundary integration point ip node mapping (ip on an ordinal to local node number)
+  ipNodeMap_.resize(6); // 2 ips * 3 faces
+  // face 0;
+  ipNodeMap_[0] = 0;  ipNodeMap_[1] = 1; 
+  // face 1; 
+  ipNodeMap_[2] = 1;  ipNodeMap_[3] = 2; 
+  // face 2;
+  ipNodeMap_[4] = 2;  ipNodeMap_[5] = 0;  
 }
 
 //--------------------------------------------------------------------------
@@ -3627,6 +3840,17 @@ Tri2DSCS::Tri2DSCS()
 Tri2DSCS::~Tri2DSCS()
 {
   // does nothing
+}
+
+//--------------------------------------------------------------------------
+//-------- ipNodeMap -------------------------------------------------------
+//--------------------------------------------------------------------------
+const int *
+Tri2DSCS::ipNodeMap(
+  int ordinal)
+{
+  // define ip->node mappings for each face (ordinal); 
+  return &ipNodeMap_[ordinal*2];
 }
 
 //--------------------------------------------------------------------------
@@ -4014,7 +4238,7 @@ Quad3DSCS::Quad3DSCS()
   numIntPoints_ = 4;
   scaleToStandardIsoFac_ = 2.0;
 
-  // define ip node mappings
+  // define ip node mappings; ordinal size = 1
   ipNodeMap_.resize(4);
   ipNodeMap_[0] = 0;
   ipNodeMap_[1] = 1;
@@ -4033,8 +4257,7 @@ Quad3DSCS::Quad3DSCS()
   intgLocShift_[0]  = -0.50; intgLocShift_[1] = -0.50; // surf 1
   intgLocShift_[2]  =  0.50; intgLocShift_[3] = -0.50; // surf 2
   intgLocShift_[4]  =  0.50; intgLocShift_[5] =  0.50; // surf 3
-  intgLocShift_[6]  = -0.50; intgLocShift_[7] =  0.50; // surf 4
-  
+  intgLocShift_[6]  = -0.50; intgLocShift_[7] =  0.50; // surf 4  
 }
 
 //--------------------------------------------------------------------------
@@ -4049,9 +4272,10 @@ Quad3DSCS::~Quad3DSCS()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-Quad3DSCS::ipNodeMap()
+Quad3DSCS::ipNodeMap(
+  int /*ordinal*/)
 {
-  // define scv->node mappings
+  // define ip->node mappings for each face (single ordinal); 
   return &ipNodeMap_[0];
 }
 
@@ -4404,9 +4628,10 @@ Quad93DSCS::~Quad93DSCS()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-Quad93DSCS::ipNodeMap()
+Quad93DSCS::ipNodeMap(
+  int /*ordinal*/)
 {
-  // define scv->node mappings
+  // define ip->node mappings for each face (single ordinal); 
   return &ipNodeMap_[0];
 }
 
@@ -4496,7 +4721,7 @@ Tri3DSCS::Tri3DSCS()
   nodesPerElement_ = 3;
   numIntPoints_ = 3;
 
-  // define ip node mappings
+  // define ip node mappings; ordinal size = 1
   ipNodeMap_.resize(3);
   ipNodeMap_[0] = 0;
   ipNodeMap_[1] = 1;
@@ -4529,9 +4754,10 @@ Tri3DSCS::~Tri3DSCS()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-Tri3DSCS::ipNodeMap()
+Tri3DSCS::ipNodeMap(
+  int /*ordinal*/)
 {
-  // define scv->node mappings
+  // define ip->node mappings for each face (single ordinal); 
   return &ipNodeMap_[0];
 }
 
@@ -4754,7 +4980,7 @@ Edge2DSCS::Edge2DSCS()
   numIntPoints_ = 2;
   scaleToStandardIsoFac_ = 2.0;
 
-  // define ip node mappings
+  // define ip node mappings; ordinal size = 1
   ipNodeMap_.resize(2);
   ipNodeMap_[0] = 0;
   ipNodeMap_[1] = 1;
@@ -4779,9 +5005,10 @@ Edge2DSCS::~Edge2DSCS()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-Edge2DSCS::ipNodeMap()
+Edge2DSCS::ipNodeMap(
+  int /*ordinal*/)
 {
-  // define scv->node mappings
+  // define ip->node mappings for each face (single ordinal); 
   return &ipNodeMap_[0];
 }
 
@@ -4931,7 +5158,7 @@ Edge32DSCS::Edge32DSCS()
   nodesPerElement_ = 3;
   numIntPoints_ = 6;
 
-  // define ip node mappings
+  // define ip node mappings; ordinal size = 1
   ipNodeMap_.resize(6);
   ipNodeMap_[0]  = 0;
   ipNodeMap_[1]  = 0;
@@ -4982,9 +5209,10 @@ Edge32DSCS::~Edge32DSCS()
 //-------- ipNodeMap -------------------------------------------------------
 //--------------------------------------------------------------------------
 const int *
-Edge32DSCS::ipNodeMap()
+Edge32DSCS::ipNodeMap(
+  int /*ordinal*/)
 {
-  // define scv->node mappings
+  // define ip->node mappings for each face (single ordinal); 
   return &ipNodeMap_[0];
 }
 

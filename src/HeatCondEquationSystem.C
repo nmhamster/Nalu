@@ -960,7 +960,7 @@ HeatCondEquationSystem::solve_and_update_png()
 void
 HeatCondEquationSystem::compute_norm()
 {
-  const bool doIt = true;
+  const bool doIt = false;
   if ( !doIt )
     return;
 

@@ -114,7 +114,7 @@ AssembleContinuityInflowSolverAlgorithm::execute()
     // extract master element specifics
     MasterElement *meFC = realm_.get_surface_master_element(b.topology());
     const int nodesPerFace = meFC->nodesPerElement_;
-    const int numScsIp = meFC->numIntPoints_;
+    const int numScsBip = meFC->numIntPoints_;
     const int *ipNodeMap = meFC->ipNodeMap();
 
     // resize some things; matrix related
@@ -127,7 +127,7 @@ AssembleContinuityInflowSolverAlgorithm::execute()
     // algorithm related
     ws_densityBC.resize(nodesPerFace);
     ws_velocityBC.resize(nodesPerFace*nDim);
-    ws_shape_function.resize(numScsIp*nodesPerFace);
+    ws_shape_function.resize(numScsBip*nodesPerFace);
 
     // pointers
     double *p_lhs = &lhs[0];
@@ -179,7 +179,7 @@ AssembleContinuityInflowSolverAlgorithm::execute()
       }
 
       // start the assembly
-      for ( int ip = 0; ip < numScsIp; ++ip ) {
+      for ( int ip = 0; ip < numScsBip; ++ip ) {
 
         const int nn = ipNodeMap[ip];
 

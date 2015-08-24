@@ -325,15 +325,15 @@ LowMachEquationSystem::register_open_bc(
 {
 
   // register boundary data
-  stk::mesh::MetaData &meta_data = realm_.meta_data();
+  stk::mesh::MetaData &metaData = realm_.meta_data();
 
-  const int nDim = meta_data.spatial_dimension();
+  const int nDim = metaData.spatial_dimension();
 
-  VectorFieldType *velocityBC = &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "open_velocity_bc"));
+  VectorFieldType *velocityBC = &(metaData.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "open_velocity_bc"));
   stk::mesh::put_field(*velocityBC, *part, nDim);
 
   ScalarFieldType *pressureBC
-    = &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "pressure_bc"));
+    = &(metaData.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "pressure_bc"));
   stk::mesh::put_field(*pressureBC, *part );
 
   // extract the value for user specified velocity and save off the AuxFunction
@@ -371,12 +371,12 @@ LowMachEquationSystem::register_open_bc(
   bcDataAlg_.push_back(auxAlgPbc);
 
   // mdot at open bc; register field
-  const int numIp = theTopo.num_nodes();
-  stk::topology::rank_t sideRank = static_cast<stk::topology::rank_t>(meta_data.side_rank());
-  GenericFieldType *mdotBip =
-    &(meta_data.declare_field<GenericFieldType>(sideRank, "open_mass_flow_rate"));
-  stk::mesh::put_field(*mdotBip, *part, numIp );
-
+  MasterElement *meFC = realm_.get_surface_master_element(theTopo);
+  const int numScsIp = meFC->numIntPoints_;
+  GenericFieldType *mdotBip 
+    = &(metaData.declare_field<GenericFieldType>(static_cast<stk::topology::rank_t>(metaData.side_rank()), 
+                                                 "open_mass_flow_rate"));
+  stk::mesh::put_field(*mdotBip, *part, numScsIp);
 }
 
 //--------------------------------------------------------------------------
@@ -599,7 +599,6 @@ LowMachEquationSystem::solve_and_update()
   momentumEqSys_->cflReyAlgDriver_->execute();
   
   compute_norm();
-
 }
 
 //--------------------------------------------------------------------------
@@ -2514,9 +2513,11 @@ void
 ContinuityEquationSystem::manage_projected_nodal_gradient(
   EquationSystems& eqSystems)
 {
-  projectedNodalGradEqs_ 
-    = new ProjectedNodalGradientEquationSystem(eqSystems, "dpdx", "qTmp", "pressure", "PNGGradEQS");
-  // fill the map; only require wall (which is the same name)...
+  if ( NULL == projectedNodalGradEqs_ ) {
+    projectedNodalGradEqs_ 
+      = new ProjectedNodalGradientEquationSystem(eqSystems, "dpdx", "qTmp", "pressure", "PNGGradEQS");
+  }
+  // fill the map for expected boundary condition names...
   projectedNodalGradEqs_->set_data_map(INFLOW_BC, "pressure");
   projectedNodalGradEqs_->set_data_map(WALL_BC, "pressure");
   projectedNodalGradEqs_->set_data_map(OPEN_BC, "pressure_bc");

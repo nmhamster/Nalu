@@ -37,7 +37,7 @@ public:
   LowMachEquationSystem (
     EquationSystems& equationSystems,
     const bool elementContinuityEqs,
-    const bool managePNG = false);
+    const bool managePNG);
   virtual ~LowMachEquationSystem();
   
   virtual void initialize();

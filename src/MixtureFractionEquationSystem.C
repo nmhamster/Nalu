@@ -829,7 +829,7 @@ MixtureFractionEquationSystem::solve_and_update()
 void
 MixtureFractionEquationSystem::compute_norm()
 {
-  const bool doIt = true;
+  const bool doIt = false;
   if ( !doIt )
     return;
 
