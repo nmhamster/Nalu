@@ -40,6 +40,7 @@
 #include <ScalarGclNodeSuppAlg.h>
 #include <ScalarMassBackwardEulerNodeSuppAlg.h>
 #include <ScalarMassBDF2NodeSuppAlg.h>
+#include <ScalarMassBDF2ElemSuppAlg.h>
 #include <Simulation.h>
 #include <SolutionOptions.h>
 #include <TimeIntegrator.h>
@@ -221,6 +222,7 @@ MixtureFractionEquationSystem::register_interior_algorithm(
   }
 
   // solver; interior edge contribution (advection + diffusion)
+  bool useCMM = false;
   std::map<AlgorithmType, SolverAlgorithm *>::iterator itsi
     = solverAlgDriver_->solverAlgMap_.find(algType);
   if ( itsi == solverAlgDriver_->solverAlgMap_.end() ) {
@@ -240,14 +242,23 @@ MixtureFractionEquationSystem::register_interior_algorithm(
       std::vector<std::string> mapNameVec = isrc->second;
       for (size_t k = 0; k < mapNameVec.size(); ++k ) {
         std::string sourceName = mapNameVec[k];
+        SupplementalAlgorithm *suppAlg = NULL;
         if (sourceName == "SteadyTaylorVortex" ) {
-          SteadyTaylorVortexMixFracSrcElemSuppAlg *theSrc
-            = new SteadyTaylorVortexMixFracSrcElemSuppAlg(realm_);
-          theAlg->supplementalAlg_.push_back(theSrc); 
+          suppAlg = new SteadyTaylorVortexMixFracSrcElemSuppAlg(realm_);
+        }
+        else if (sourceName == "mixture_fraction_time_derivative" ) {
+          useCMM = true;
+          if ( realm_.number_of_states() == 2 ) {
+            throw std::runtime_error("ElemSrcTermsError::CMM Backward Euler not supported");
+          }
+          else {
+            suppAlg = new ScalarMassBDF2ElemSuppAlg(realm_, mixFrac_);
+          } 
         }
         else {
-          throw std::runtime_error("ElemSrcTermsError::only support SteadyTV");
+          throw std::runtime_error("ElemSrcTermsError::only support SteadyTV and time term");
         }     
+        theAlg->supplementalAlg_.push_back(suppAlg); 
       }
     }
   }
@@ -266,15 +277,17 @@ MixtureFractionEquationSystem::register_interior_algorithm(
     solverAlgDriver_->solverAlgMap_[algMass] = theAlg;
 
     // now create the supplemental alg for mass term
-    if ( realm_.number_of_states() == 2 ) {
-      ScalarMassBackwardEulerNodeSuppAlg *theMass
-        = new ScalarMassBackwardEulerNodeSuppAlg(realm_, mixFrac_);
-      theAlg->supplementalAlg_.push_back(theMass);
-    }
-    else {
-      ScalarMassBDF2NodeSuppAlg *theMass
-        = new ScalarMassBDF2NodeSuppAlg(realm_, mixFrac_);
-      theAlg->supplementalAlg_.push_back(theMass);
+    if ( !useCMM ) {
+      if ( realm_.number_of_states() == 2 ) {
+        ScalarMassBackwardEulerNodeSuppAlg *theMass
+          = new ScalarMassBackwardEulerNodeSuppAlg(realm_, mixFrac_);
+        theAlg->supplementalAlg_.push_back(theMass);
+      }
+      else {
+        ScalarMassBDF2NodeSuppAlg *theMass
+          = new ScalarMassBDF2NodeSuppAlg(realm_, mixFrac_);
+        theAlg->supplementalAlg_.push_back(theMass);
+      }
     }
     
     // Add src term supp alg...; limited number supported

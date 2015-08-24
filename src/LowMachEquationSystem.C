@@ -53,6 +53,7 @@
 #include <ContactManager.h>
 #include <ContinuityMassBackwardEulerNodeSuppAlg.h>
 #include <ContinuityMassBDF2NodeSuppAlg.h>
+#include <ContinuityMassBDF2ElemSuppAlg.h>
 #include <CopyFieldAlgorithm.h>
 #include <DirichletBC.h>
 #include <EffectiveDiffFluxCoeffAlgorithm.h>
@@ -67,6 +68,7 @@
 #include <LinearSystem.h>
 #include <master_element/MasterElement.h>
 #include <MomentumBuoyancySrcNodeSuppAlg.h>
+#include <MomentumBuoyancySrcElemSuppAlg.h>
 #include <MomentumBoussinesqSrcNodeSuppAlg.h>
 #include <MomentumBodyForceSrcNodeSuppAlg.h>
 #include <MomentumGclSrcNodeSuppAlg.h>
@@ -1066,34 +1068,33 @@ MomentumEquationSystem::register_interior_algorithm(
     }
     solverAlgDriver_->solverAlgMap_[algType] = theAlg;
     
-    // look for mass/src
+    // look for fully integrated source terms, e.g., mass/src
     std::map<std::string, std::vector<std::string> >::iterator isrc 
       = realm_.solutionOptions_->elemSrcTermsMap_.find("momentum");
     if ( isrc != realm_.solutionOptions_->elemSrcTermsMap_.end() ) {
       std::vector<std::string> mapNameVec = isrc->second;
       for (size_t k = 0; k < mapNameVec.size(); ++k ) {
         std::string sourceName = mapNameVec[k];
+        SupplementalAlgorithm *suppAlg = NULL;
         if (sourceName == "momentum_time_derivative" ) {
           useCMM = true;
           if ( realm_.number_of_states() == 2 ) {
-            MomentumMassBackwardEulerElemSuppAlg *theSrc
-              = new MomentumMassBackwardEulerElemSuppAlg(realm_);
-            theAlg->supplementalAlg_.push_back(theSrc);
+            suppAlg = new MomentumMassBackwardEulerElemSuppAlg(realm_);
           }
           else {
-            MomentumMassBDF2ElemSuppAlg *theSrc
-              = new MomentumMassBDF2ElemSuppAlg(realm_);
-            theAlg->supplementalAlg_.push_back(theSrc);
+            suppAlg = new MomentumMassBDF2ElemSuppAlg(realm_);
           } 
         }
         else if (sourceName == "SteadyTaylorVortex" ) {
-          SteadyTaylorVortexMomentumSrcElemSuppAlg *theSrc
-            = new SteadyTaylorVortexMomentumSrcElemSuppAlg(realm_);
-          theAlg->supplementalAlg_.push_back(theSrc); 
+          suppAlg = new SteadyTaylorVortexMomentumSrcElemSuppAlg(realm_);
+        }
+        else if (sourceName == "buoyancy" ) {
+          suppAlg = new MomentumBuoyancySrcElemSuppAlg(realm_);
         }
         else {
           throw std::runtime_error("ElemSrcTermsError::only support CMM and SteadyTV");
         }
+        theAlg->supplementalAlg_.push_back(suppAlg); 
       }
     }
   }
@@ -1954,7 +1955,6 @@ ContinuityEquationSystem::register_interior_algorithm(
     else {
       its->second->partVec_.push_back(part);
     }
-
   }
   else {
 
@@ -1987,14 +1987,17 @@ ContinuityEquationSystem::register_interior_algorithm(
         std::vector<std::string> mapNameVec = isrc->second;
         for (size_t k = 0; k < mapNameVec.size(); ++k ) {
           std::string sourceName = mapNameVec[k];
+          SupplementalAlgorithm *suppAlg = NULL;
           if (sourceName == "SteadyTaylorVortex" ) {
-            SteadyTaylorVortexContinuitySrcElemSuppAlg *theSrc
-              = new SteadyTaylorVortexContinuitySrcElemSuppAlg(realm_);
-            theAlg->supplementalAlg_.push_back(theSrc); 
+            suppAlg = new SteadyTaylorVortexContinuitySrcElemSuppAlg(realm_);
+          }
+          else if (sourceName == "density_time_derivative" ) {
+            suppAlg = new ContinuityMassBDF2ElemSuppAlg(realm_);
           }
           else {
             throw std::runtime_error("ElemSrcTermsError::only support SteadyTV");
           }
+          theAlg->supplementalAlg_.push_back(suppAlg); 
         }
       }
     }
