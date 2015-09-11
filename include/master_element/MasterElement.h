@@ -431,6 +431,22 @@ public:
   int opposingFace(
     const int ordinal, const int node);
 
+  double isInElement(
+    const double *elemNodalCoord,
+    const double *pointCoord,
+    double *isoParCoord);
+
+  void interpolatePoint(
+    const int &nComp,
+    const double *isoParCoord,
+    const double *field,
+    double *result);
+
+  void general_shape_fcn(
+    const int numIp,
+    const double *isoParCoord,
+    double *shpfc);
+
   void general_face_grad_op(
     const int face_ordinal,
     const double *isoParCoord,
@@ -444,6 +460,9 @@ public:
     const int & npoints,
     const double *side_pcoords,
     double *elem_pcoords);
+
+  // helper
+  double parametric_distance(const std::vector<double> &x);
 };
 
 // Pyramid 5 subcontrol volume
@@ -815,7 +834,6 @@ private:
   };
 
   std::vector<ContourData>ipInfo_;
-
 };
 
 // 2D Tri 3 subcontrol volume

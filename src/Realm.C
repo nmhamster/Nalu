@@ -57,6 +57,9 @@
 #include <SolutionOptions.h>
 #include <TimeIntegrator.h>
 
+// overset
+#include <overset/OversetManager.h>
+
 // props
 #include <PropertyEvaluator.h>
 #include <ConstantPropertyEvaluator.h>
@@ -175,8 +178,10 @@ Realm::Realm(Realms& realms)
     timerTransferSearch_(0.0),
     contactManager_(NULL),
     nonConformalManager_(NULL),
+    oversetManager_(NULL),
     hasContact_(false),
     hasNonConformal_(false),
+    hasOverset_(false),
     hasTransfer_(false),
     periodicManager_(NULL),
     hasPeriodic_(false),
@@ -190,7 +195,8 @@ Realm::Realm(Realms& realms)
     HDF5ptr_(NULL),
     autoDecompType_("None"),
     activateAura_(false),
-    activateMemoryDiagnostic_(false)
+    activateMemoryDiagnostic_(false),
+    supportInconsistentRestart_(false)
 {
   // nothing to do
 }
@@ -445,6 +451,9 @@ Realm::initialize()
   if ( hasNonConformal_ )
     initialize_non_conformal();
 
+  if ( hasOverset_ )
+    initialize_overset();
+
   compute_l2_scaling();
 
   equationSystems_.initialize();
@@ -535,6 +544,9 @@ Realm::load(const YAML::Node & node)
   get_if_present(node, "activate_memory_diagnostic", activateMemoryDiagnostic_, activateMemoryDiagnostic_);
   if ( activateMemoryDiagnostic_ )
     NaluEnv::self().naluOutputP0() << "Nalu will activate detailed memory pulse" << std::endl;
+  
+  // allow for inconsistent restart (fields are missing)
+  get_if_present(node, "support_inconsistent_multi_state_restart", supportInconsistentRestart_, supportInconsistentRestart_);
 
   // time step control
   const bool dtOptional = true;
@@ -774,6 +786,9 @@ Realm::setup_bc()
         break;
       case NON_CONFORMAL_BC:
         equationSystems_.register_non_conformal_bc(*reinterpret_cast<const NonConformalBoundaryConditionData *>(&bc));
+        break;
+      case OVERSET_BC:
+        equationSystems_.register_overset_bc(*reinterpret_cast<const OversetBoundaryConditionData *>(&bc));
         break;
       default:
         throw std::runtime_error("unknown bc");
@@ -1546,6 +1561,10 @@ Realm::pre_timestep_work()
     if ( hasNonConformal_ )
       initialize_non_conformal();
 
+    // and overset algorithm
+    if ( hasOverset_ )
+      initialize_overset();
+
     // now re-initialize linear system
     equationSystems_.reinitialize_linear_system();
 
@@ -1725,6 +1744,7 @@ Realm::create_mesh()
   if (realmUsesEdges_) {
     edgesPart_ = &metaData_->declare_part("create_edges_part", stk::topology::EDGE_RANK);
   }
+
   const double end_time = stk::cpu_time();
 
   // set mesh reading
@@ -1738,25 +1758,27 @@ Realm::create_mesh()
 void
 Realm::create_output_mesh()
 {
-  // exodus file creation
+  // exodus output file creation
+  if (outputInfo_->hasOutputBlock_ ) {
 
-  if (outputInfo_->outputFreq_ == 0) return;
+    if (outputInfo_->outputFreq_ == 0)
+      return;
 
-  // if we are adapting, skip when no I/O happens before first adapt step
-  if (solutionOptions_->useAdapter_ && outputInfo_->meshAdapted_ == false &&
-      solutionOptions_->adaptivityFrequency_ <= outputInfo_->outputFreq_) {
-    return;
-  }
+    // if we are adapting, skip when no I/O happens before first adapt step
+    if (solutionOptions_->useAdapter_ && outputInfo_->meshAdapted_ == false &&
+        solutionOptions_->adaptivityFrequency_ <= outputInfo_->outputFreq_) {
+      return;
+    }
 
-  std::string oname =  outputInfo_->outputDBName_ ;
-  if (solutionOptions_->useAdapter_ && solutionOptions_->maxRefinementLevel_) {
-    static int fileid = 0;
-    std::ostringstream fileid_ss;
-    fileid_ss << std::setfill('0') << std::setw(4) << (fileid+1);
-    if (fileid++ > 0) oname += "-s" + fileid_ss.str();
-  }
+    std::string oname =  outputInfo_->outputDBName_ ;
+    if (solutionOptions_->useAdapter_ && solutionOptions_->maxRefinementLevel_) {
+      static int fileid = 0;
+      std::ostringstream fileid_ss;
+      fileid_ss << std::setfill('0') << std::setw(4) << (fileid+1);
+      if (fileid++ > 0) oname += "-s" + fileid_ss.str();
+    }
 
-  resultsFileIndex_ = ioBroker_->create_output_mesh( oname, stk::io::WRITE_RESULTS );
+    resultsFileIndex_ = ioBroker_->create_output_mesh( oname, stk::io::WRITE_RESULTS );
 
 #if defined (NALU_USES_PERCEPT)
 
@@ -1772,30 +1794,31 @@ Realm::create_output_mesh()
 
 #endif
 
-  // Tell stk_io how to output element block nodal fields:
-  // if 'true' passed to function, then output them as nodeset fields;
-  // if 'false', then output as nodal fields (on all nodes of the mesh, zero-filled)
-  // The option is provided since some post-processing/visualization codes do not
-  // correctly handle nodeset fields.
-  ioBroker_->use_nodeset_for_part_nodes_fields(resultsFileIndex_, outputInfo_->outputNodeSet_);
+    // Tell stk_io how to output element block nodal fields:
+    // if 'true' passed to function, then output them as nodeset fields;
+    // if 'false', then output as nodal fields (on all nodes of the mesh, zero-filled)
+    // The option is provided since some post-processing/visualization codes do not
+    // correctly handle nodeset fields.
+    ioBroker_->use_nodeset_for_part_nodes_fields(resultsFileIndex_, outputInfo_->outputNodeSet_);
 
-  // FIXME: add_field can take user-defined output name, not just varName
-  for ( std::set<std::string>::iterator itorSet = outputInfo_->outputFieldNameSet_.begin(); 
-      itorSet != outputInfo_->outputFieldNameSet_.end(); ++itorSet ) {
-    std::string varName = *itorSet;
-    stk::mesh::FieldBase *theField = stk::mesh::get_field_by_name(varName, *metaData_);
-    if ( NULL == theField ) {
-      NaluEnv::self().naluOutputP0() << " Sorry, no field by the name " << varName << std::endl;
+    // FIXME: add_field can take user-defined output name, not just varName
+    for ( std::set<std::string>::iterator itorSet = outputInfo_->outputFieldNameSet_.begin();
+        itorSet != outputInfo_->outputFieldNameSet_.end(); ++itorSet ) {
+      std::string varName = *itorSet;
+      stk::mesh::FieldBase *theField = stk::mesh::get_field_by_name(varName, *metaData_);
+      if ( NULL == theField ) {
+        NaluEnv::self().naluOutputP0() << " Sorry, no field by the name " << varName << std::endl;
+      }
+      else {
+        // 'varName' is the name that will be written to the database
+        // For now, just using the name of the stk field
+        ioBroker_->add_field(resultsFileIndex_, *theField, varName);
+      }
     }
-    else {
-      // 'varName' is the name that will be written to the database
-      // For now, just using the name of the stk field
-      ioBroker_->add_field(resultsFileIndex_, *theField, varName);
-    }
+
+    // reset this flag
+    outputInfo_->meshAdapted_ = false;
   }
-
-  // reset this flag
-  outputInfo_->meshAdapted_ = false;
 }
 
 //--------------------------------------------------------------------------
@@ -1804,7 +1827,12 @@ Realm::create_output_mesh()
 void
 Realm::create_restart_mesh()
 {
+  // exodus restart file creation
   if (outputInfo_->hasRestartBlock_ ) {
+
+    if (outputInfo_->restartFreq_ == 0)
+      return;
+
     restartFileIndex_ = ioBroker_->create_output_mesh(outputInfo_->restartDBName_, stk::io::WRITE_RESTART);
 
     // loop over restart variable field names supplied by Eqs
@@ -2065,6 +2093,15 @@ Realm::initialize_non_conformal()
 }
 
 //--------------------------------------------------------------------------
+//-------- initialize_overset ----------------------------------------------
+//--------------------------------------------------------------------------
+void
+Realm::initialize_overset()
+{
+  oversetManager_->initialize();
+}
+
+//--------------------------------------------------------------------------
 //-------- get_coordinates_name ---------------------------------------------
 //--------------------------------------------------------------------------
 std::string
@@ -2107,7 +2144,26 @@ Realm::does_mesh_move()
 bool
 Realm::has_non_matching_boundary_face_alg()
 {
-  return hasContact_ | hasNonConformal_;
+  return hasContact_ | hasNonConformal_ | hasOverset_; 
+}
+
+//--------------------------------------------------------------------------
+//-------- query_for_overset -----------------------------------------------
+//--------------------------------------------------------------------------
+bool 
+Realm::query_for_overset() 
+{
+  for (size_t ibc = 0; ibc < boundaryConditions_.size(); ++ibc) {
+    BoundaryCondition& bc = *boundaryConditions_[ibc];
+    switch(bc.theBcType_) {
+    case OVERSET_BC:
+      hasOverset_ = true;
+      break;
+    default:
+      hasOverset_ = false;
+    }
+  }
+  return hasOverset_;
 }
 
 //--------------------------------------------------------------------------
@@ -2901,7 +2957,6 @@ Realm::register_periodic_bc(
 
   // add the parts to the manager
   periodicManager_->add_periodic_pair(masterMeshPart, slaveMeshPart, searchTolerance, searchMethodName);
-
 }
 
 //--------------------------------------------------------------------------
@@ -2944,7 +2999,6 @@ Realm::setup_non_conformal_bc(
                            searchTolerance);
   
   nonConformalManager_->nonConformalInfoVec_.push_back(nonConformalInfo);
-
 }
 
 //--------------------------------------------------------------------------
@@ -2985,6 +3039,22 @@ Realm::register_non_conformal_bc(
   else {
     it->second->partVec_.push_back(part);
   }
+}
+
+//--------------------------------------------------------------------------
+//-------- setup_overset_bc ------------------------------------------------
+//--------------------------------------------------------------------------
+void
+Realm::setup_overset_bc(
+  const OversetBoundaryConditionData &oversetBCData)
+{
+  // setting flag for linear system setup (may have been set via earlier "query")
+  hasOverset_ = true;
+  
+  // create manager while providing overset data
+  if ( NULL == oversetManager_ ) {
+    oversetManager_ = new OversetManager(*this,oversetBCData.userData_);
+  }   
 }
 
 //--------------------------------------------------------------------------
@@ -3038,6 +3108,19 @@ Realm::get_slave_part_vector()
     return emptyPartVector_;
 }
 
+
+//--------------------------------------------------------------------------
+//-------- overset_field_update -------------------------------------------
+//--------------------------------------------------------------------------
+void
+Realm::overset_orphan_node_field_update(
+  stk::mesh::FieldBase *theField,
+  const unsigned sizeRow,
+  const unsigned sizeCol)
+{
+  oversetManager_->overset_orphan_node_field_update(theField, sizeRow, sizeCol);
+}
+
 //--------------------------------------------------------------------------
 //-------- provide_output --------------------------------------------------
 //--------------------------------------------------------------------------
@@ -3046,30 +3129,33 @@ Realm::provide_output()
 {
   stk::diag::TimeBlock mesh_output_timeblock(Simulation::outputTimer());
 
-  if (outputInfo_->outputFreq_ == 0) return;
+  if ( outputInfo_->hasOutputBlock_ ) {
 
-  const double start_time = stk::cpu_time();
+    if (outputInfo_->outputFreq_ == 0)
+      return;
 
-  // process output via io
-  const double currentTime = get_current_time();
-  const int timeStepCount = get_time_step_count();
-  const bool isOutput = (timeStepCount % outputInfo_->outputFreq_) == 0;
+    const double start_time = stk::cpu_time();
 
-  if ( isOutput ) {
-    // when adaptivity has occurred, re-create the output mesh file
-    if (outputInfo_->meshAdapted_)
-      create_output_mesh();
+    // process output via io
+    const double currentTime = get_current_time();
+    const int timeStepCount = get_time_step_count();
+    const bool isOutput = (timeStepCount % outputInfo_->outputFreq_) == 0;
 
-    // not set up for globals
-    ioBroker_->process_output_request(resultsFileIndex_, currentTime);
-    equationSystems_.provide_output();
+    if ( isOutput ) {
+      // when adaptivity has occurred, re-create the output mesh file
+      if (outputInfo_->meshAdapted_)
+        create_output_mesh();
+
+      // not set up for globals
+      ioBroker_->process_output_request(resultsFileIndex_, currentTime);
+      equationSystems_.provide_output();
+    }
+
+    const double stop_time = stk::cpu_time();
+
+    // increment time for output
+    timerOutputFields_ += (stop_time - start_time);
   }
-
-  const double stop_time = stk::cpu_time();
-
-  // increment time for output
-  timerOutputFields_ += (stop_time - start_time);
-
 }
 
 //--------------------------------------------------------------------------
@@ -3179,12 +3265,17 @@ Realm::populate_restart(
     std::vector<stk::io::MeshField> missingFields;
     foundRestartTime = ioBroker_->read_defined_input_fields(restartTime, &missingFields);
     if ( missingFields.size() > 0 ){
-      for ( size_t k = 0; k < missingFields.size(); ++k)
+      for ( size_t k = 0; k < missingFields.size(); ++k) {
         NaluEnv::self().naluOutputP0() << "WARNING: Restart value for Field "
-                        << missingFields[k].field()->name()
-                        << " is missing; will default to IC specification" << std::endl;
+                                       << missingFields[k].field()->name()
+                                       << " is missing; may default to IC specification" << std::endl;
+      }
+      if ( !supportInconsistentRestart_ ) {
+        NaluEnv::self().naluOutputP0() << "The user may desire to set the support_inconsistent_multi_state_restart Realm line command" << std::endl;
+        NaluEnv::self().naluOutputP0() << "This is applicable for a BDF2 restart run from a previously run Backward Euler simulation" << std::endl;
+      }
     }
-
+    
     // extract time parameters; okay if they are missing; no need to let the user know
     const bool abortIfNotFound = false;
     ioBroker_->get_global("timeStepNm1", timeStepNm1, abortIfNotFound);
@@ -3845,6 +3936,15 @@ Realm::get_nc_alg_upwind_advection()
 }
 
 //--------------------------------------------------------------------------
+//-------- get_nc_alg_include_pstab ----------------------------------------
+//--------------------------------------------------------------------------
+bool
+Realm::get_nc_alg_include_pstab()
+{
+  return solutionOptions_->ncAlgIncludePstab_;
+}
+
+//--------------------------------------------------------------------------
 //-------- get_material_prop_eval ------------------------------------------
 //--------------------------------------------------------------------------
 PropertyEvaluator *
@@ -4010,6 +4110,15 @@ Realm::restarted_simulation()
 }
 
 //--------------------------------------------------------------------------
+//-------- support_inconsistent_restart() ----------------------------------
+//--------------------------------------------------------------------------
+bool
+Realm::support_inconsistent_restart()
+{
+  return supportInconsistentRestart_ ;
+}
+
+//--------------------------------------------------------------------------
 //-------- get_stefan_boltzmann() ------------------------------------------
 //--------------------------------------------------------------------------
 double
@@ -4097,6 +4206,18 @@ bool
 Realm::get_activate_aura()
 {
   return activateAura_;
+}
+
+//--------------------------------------------------------------------------
+//-------- get_inactive_selector() -----------------------------------------
+//--------------------------------------------------------------------------
+stk::mesh::Selector
+Realm::get_inactive_selector()
+{
+  // provide inactive part that excludes background surface
+  return (hasOverset_) ? (stk::mesh::Selector(*oversetManager_->inActivePart_) 
+                          &!(stk::mesh::selectUnion(oversetManager_->orphanPointSurfaceVecBackground_)))
+    : stk::mesh::Selector();
 }
 
 } // namespace nalu

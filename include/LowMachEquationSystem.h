@@ -148,6 +148,8 @@ public:
     stk::mesh::Part *part,
     const stk::topology &theTopo);
 
+  virtual void register_overset_bc();
+
   virtual void initialize();
   virtual void reinitialize_linear_system();
   
@@ -226,6 +228,8 @@ public:
   virtual void register_non_conformal_bc(
     stk::mesh::Part *part,
     const stk::topology &theTopo);
+
+  virtual void register_overset_bc();
 
   virtual void initialize();
   virtual void reinitialize_linear_system();    

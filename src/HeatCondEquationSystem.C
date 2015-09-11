@@ -22,6 +22,7 @@
 #include <AssembleNodalGradBoundaryAlgorithm.h>
 #include <AssembleNodalGradEdgeContactAlgorithm.h>
 #include <AssembleNodalGradElemContactAlgorithm.h>
+#include <AssembleNodalGradNonConformalAlgorithm.h>
 #include <AssembleNodeSolverAlgorithm.h>
 #include <AuxFunctionAlgorithm.h>
 #include <ConstantAuxFunction.h>
@@ -199,7 +200,7 @@ HeatCondEquationSystem::register_nodal_fields(
   realm_.augment_property_map(THERMAL_COND_ID, thermalCond_);
 
   // make sure all states are properly populated (restart can handle this)
-  if ( numStates > 2 && !realm_.restarted_simulation() ) {
+  if ( numStates > 2 && (!realm_.restarted_simulation() || realm_.support_inconsistent_restart()) ) {
     ScalarFieldType &tempN = temperature_->field_of_state(stk::mesh::StateN);
     ScalarFieldType &tempNp1 = temperature_->field_of_state(stk::mesh::StateNP1);
 
@@ -264,6 +265,13 @@ HeatCondEquationSystem::register_element_fields(
     stk::mesh::put_field(*pstabEI, *part, numIp);
   }
   
+  // register the intersected elemental field
+  if ( realm_.query_for_overset() ) {
+    const int sizeOfElemField = 1;
+    GenericFieldType *intersectedElement
+      = &(meta_data.declare_field<GenericFieldType>(stk::topology::ELEMENT_RANK, "intersected_element"));
+    stk::mesh::put_field(*intersectedElement, *part, sizeOfElemField);
+  }
 }
 
 //--------------------------------------------------------------------------
@@ -825,16 +833,31 @@ HeatCondEquationSystem::register_non_conformal_bc(
   ScalarFieldType &tempNp1 = temperature_->field_of_state(stk::mesh::StateNP1);
   VectorFieldType &dtdxNone = dtdx_->field_of_state(stk::mesh::StateNone);
 
-  // non-solver; dtdx; allow for element-based shifted
-  std::map<AlgorithmType, Algorithm *>::iterator it
-    = assembleNodalGradAlgDriver_->algMap_.find(algType);
-  if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
-    Algorithm *theAlg 
-      = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &tempNp1, &dtdxNone, edgeNodalGradient_);
-    assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+  // non-solver; contribution to dtdx; DG algorithm decides on locations for integration points
+  if ( edgeNodalGradient_ ) {    
+    std::map<AlgorithmType, Algorithm *>::iterator it
+      = assembleNodalGradAlgDriver_->algMap_.find(algType);
+    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+      Algorithm *theAlg 
+        = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &tempNp1, &dtdxNone, edgeNodalGradient_);
+      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+    }
+    else {
+      it->second->partVec_.push_back(part);
+    }
   }
   else {
-    it->second->partVec_.push_back(part);
+    // proceed with DG
+    std::map<AlgorithmType, Algorithm *>::iterator it
+      = assembleNodalGradAlgDriver_->algMap_.find(algType);
+    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+      AssembleNodalGradNonConformalAlgorithm *theAlg 
+        = new AssembleNodalGradNonConformalAlgorithm(realm_, part, &tempNp1, &dtdxNone);
+      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+    }
+    else {
+      it->second->partVec_.push_back(part);
+    }
   }
   
   // solver; lhs; same for edge and element-based scheme
@@ -847,8 +870,16 @@ HeatCondEquationSystem::register_non_conformal_bc(
   }
   else {
     itsi->second->partVec_.push_back(part);
-  }
-  
+  }  
+}
+
+//--------------------------------------------------------------------------
+//-------- register_overset_bc ---------------------------------------------
+//--------------------------------------------------------------------------
+void
+HeatCondEquationSystem::register_overset_bc()
+{
+  create_constraint_algorithm(temperature_);
 }
 
 //--------------------------------------------------------------------------
@@ -1064,7 +1095,7 @@ HeatCondEquationSystem::compute_norm()
 }
 
 //--------------------------------------------------------------------------
-//-------- register_initial_condition_fcn ------------------------------------------------
+//-------- register_initial_condition_fcn ----------------------------------
 //--------------------------------------------------------------------------
 void
 HeatCondEquationSystem::register_initial_condition_fcn(

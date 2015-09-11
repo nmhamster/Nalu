@@ -20,6 +20,7 @@
 #include <AssembleNodalGradBoundaryAlgorithm.h>
 #include <AssembleNodalGradEdgeContactAlgorithm.h>
 #include <AssembleNodalGradElemContactAlgorithm.h>
+#include <AssembleNodalGradNonConformalAlgorithm.h>
 #include <AssembleNodeSolverAlgorithm.h>
 #include <AuxFunctionAlgorithm.h>
 #include <ConstantAuxFunction.h>
@@ -577,16 +578,31 @@ MassFractionEquationSystem::register_non_conformal_bc(
 
   const AlgorithmType algType = NON_CONFORMAL;
 
-  // non-solver; dydx; allow for element-based shifted
-  std::map<AlgorithmType, Algorithm *>::iterator it
-    = assembleNodalGradAlgDriver_->algMap_.find(algType);
-  if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
-    Algorithm *theAlg
-      = new AssembleNodalGradBoundaryAlgorithm(realm_, part, currentMassFraction_, dydx_, edgeNodalGradient_);
-    assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+  // non-solver; contribution to dwdx; DG algorithm decides on locations for integration points
+  if ( edgeNodalGradient_ ) {    
+    std::map<AlgorithmType, Algorithm *>::iterator it
+      = assembleNodalGradAlgDriver_->algMap_.find(algType);
+    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+      Algorithm *theAlg 
+        = new AssembleNodalGradBoundaryAlgorithm(realm_, part, currentMassFraction_, dydx_, edgeNodalGradient_);
+      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+    }
+    else {
+      it->second->partVec_.push_back(part);
+    }
   }
   else {
-    it->second->partVec_.push_back(part);
+    // proceed with DG
+    std::map<AlgorithmType, Algorithm *>::iterator it
+      = assembleNodalGradAlgDriver_->algMap_.find(algType);
+    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+      AssembleNodalGradNonConformalAlgorithm *theAlg 
+        = new AssembleNodalGradNonConformalAlgorithm(realm_, part, currentMassFraction_, dydx_);
+      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+    }
+    else {
+      it->second->partVec_.push_back(part);
+    }
   }
 
   // solver; lhs; same for edge and element-based scheme
@@ -600,6 +616,15 @@ MassFractionEquationSystem::register_non_conformal_bc(
   else {
     itsi->second->partVec_.push_back(part);
   }
+}
+
+//--------------------------------------------------------------------------
+//-------- register_overset_bc ---------------------------------------------
+//--------------------------------------------------------------------------
+void
+MassFractionEquationSystem::register_overset_bc()
+{
+  create_constraint_algorithm(currentMassFraction_);
 }
 
 //--------------------------------------------------------------------------
@@ -649,7 +674,6 @@ MassFractionEquationSystem::set_current_mass_fraction(
   // manage boundary data; copy kth value of bcField (from) to currentBcField (to)
   std::set<std::pair<stk::mesh::FieldBase*, stk::mesh::FieldBase*> >::iterator it;
   for ( it = bcMassFractionSet_.begin(); it != bcMassFractionSet_.end(); ++it) {
-    //std::pair<stk::mesh::FieldBase*, stk::mesh::FieldBase*> thePair = *it;
     const stk::mesh::FieldBase *fromBcField = (*it).first;
     const stk::mesh::FieldBase *toBcField = (*it).second;
     copy_mass_fraction(*fromBcField, k, *toBcField, 0);

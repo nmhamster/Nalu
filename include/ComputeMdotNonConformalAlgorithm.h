@@ -27,12 +27,14 @@ public:
   ComputeMdotNonConformalAlgorithm(
     Realm &realm,
     stk::mesh::Part *part,
-    ScalarFieldType *pressure);
+    ScalarFieldType *pressure,
+    VectorFieldType *Gjp);
   ~ComputeMdotNonConformalAlgorithm();
 
   void execute();
 
   ScalarFieldType *pressure_;
+  VectorFieldType *Gjp_;
   VectorFieldType *velocityRTM_;
   VectorFieldType *coordinates_;
   ScalarFieldType *density_;

@@ -112,10 +112,15 @@ public:
     const stk::topology &theTopoMaster,
     const stk::topology &theTopoSlave,
     const PeriodicBoundaryConditionData &periodicBCData) {}
-
+  
   virtual void register_non_conformal_bc(
     stk::mesh::Part *part,
     const stk::topology &theTopo) {}
+
+  virtual void register_overset_bc() {}
+
+  virtual void create_constraint_algorithm(
+    stk::mesh::FieldBase *theField);
 
   virtual void register_surface_pp_algorithm(
     const PostProcessingData &theData,

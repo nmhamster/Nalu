@@ -72,6 +72,8 @@ public:
     stk::mesh::Part *part,
     const stk::topology &theTopo);
 
+  virtual void register_overset_bc();
+
   virtual void register_initial_condition_fcn(
       stk::mesh::Part *part,
       const std::map<std::string, std::string> &theNames,

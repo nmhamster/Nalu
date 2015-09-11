@@ -21,6 +21,7 @@
 #include <AssembleNodalGradBoundaryAlgorithm.h>
 #include <AssembleNodalGradEdgeContactAlgorithm.h>
 #include <AssembleNodalGradElemContactAlgorithm.h>
+#include <AssembleNodalGradNonConformalAlgorithm.h>
 #include <AssembleNodeSolverAlgorithm.h>
 #include <AssembleWallHeatTransferAlgorithmDriver.h>
 #include <AuxFunctionAlgorithm.h>
@@ -258,7 +259,7 @@ EnthalpyEquationSystem::register_nodal_fields(
   }
 
   // make sure all states are properly populated (restart can handle this)
-  if ( numStates > 2 && !realm_.restarted_simulation() ) {
+  if ( numStates > 2 && (!realm_.restarted_simulation() || realm_.support_inconsistent_restart()) ) {
     ScalarFieldType &enthalpyN = enthalpy_->field_of_state(stk::mesh::StateN);
     ScalarFieldType &enthalpyNp1 = enthalpy_->field_of_state(stk::mesh::StateNP1);
 
@@ -781,16 +782,31 @@ EnthalpyEquationSystem::register_non_conformal_bc(
   ScalarFieldType &hNp1 = enthalpy_->field_of_state(stk::mesh::StateNP1);
   VectorFieldType &dhdxNone = dhdx_->field_of_state(stk::mesh::StateNone);
 
-  // non-solver; dhdx; allow for element-based shifted
-  std::map<AlgorithmType, Algorithm *>::iterator it
-    = assembleNodalGradAlgDriver_->algMap_.find(algType);
-  if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
-    Algorithm *theAlg
-      = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &hNp1, &dhdxNone, edgeNodalGradient_);
-    assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+  // non-solver; contribution to dhdx; DG algorithm decides on locations for integration points
+  if ( edgeNodalGradient_ ) {    
+    std::map<AlgorithmType, Algorithm *>::iterator it
+      = assembleNodalGradAlgDriver_->algMap_.find(algType);
+    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+      Algorithm *theAlg 
+        = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &hNp1, &dhdxNone, edgeNodalGradient_);
+      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+    }
+    else {
+      it->second->partVec_.push_back(part);
+    }
   }
   else {
-    it->second->partVec_.push_back(part);
+    // proceed with DG
+    std::map<AlgorithmType, Algorithm *>::iterator it
+      = assembleNodalGradAlgDriver_->algMap_.find(algType);
+    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+      AssembleNodalGradNonConformalAlgorithm *theAlg 
+        = new AssembleNodalGradNonConformalAlgorithm(realm_, part, &hNp1, &dhdxNone);
+      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+    }
+    else {
+      it->second->partVec_.push_back(part);
+    }
   }
 
   // solver; lhs; same for edge and element-based scheme
@@ -804,6 +820,15 @@ EnthalpyEquationSystem::register_non_conformal_bc(
   else {
     itsi->second->partVec_.push_back(part);
   }
+}
+
+//--------------------------------------------------------------------------
+//-------- register_overset_bc ---------------------------------------------
+//--------------------------------------------------------------------------
+void
+EnthalpyEquationSystem::register_overset_bc()
+{
+  create_constraint_algorithm(enthalpy_);
 }
 
 //--------------------------------------------------------------------------

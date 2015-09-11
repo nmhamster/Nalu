@@ -51,6 +51,7 @@ class AuxFunctionAlgorithm;
 class ComputeGeometryAlgorithmDriver;
 class ContactInfo;
 class ContactManager;
+class OversetManager;
 class NonConformalManager;
 class ErrorIndicatorAlgorithmDriver;
 #if defined (NALU_USES_PERCEPT)
@@ -147,6 +148,9 @@ public:
   bool does_mesh_move();
   bool has_non_matching_boundary_face_alg();
 
+  // overset boundary condition requires elemental field registration
+  bool query_for_overset();
+
   void set_omega(
     stk::mesh::Part *targetPart,
     double omega);
@@ -157,8 +161,10 @@ public:
   void set_mesh_velocity(
     stk::mesh::Part *targetPart);
 
+  // non-conformal-like algorithm suppoer
   void initialize_contact();
   void initialize_non_conformal();
+  void initialize_overset();
 
   void compute_geometry();
   void compute_vrtm();
@@ -214,6 +220,9 @@ public:
     stk::mesh::Part *part,
     const stk::topology &theTopo);
 
+  void setup_overset_bc(
+    const OversetBoundaryConditionData &oversetBCData);
+
   void periodic_field_update(
     stk::mesh::FieldBase *theField,
     const unsigned &sizeOfTheField,
@@ -221,13 +230,18 @@ public:
 
   void periodic_delta_solution_update(
      stk::mesh::FieldBase *theField,
-     const unsigned &sizeOfTheField) const;
+     const unsigned &sizeOfField) const;
 
   void periodic_max_field_update(
      stk::mesh::FieldBase *theField,
-     const unsigned &sizeOfTheField) const;
+     const unsigned &sizeOfField) const;
 
   const stk::mesh::PartVector &get_slave_part_vector();
+
+  void overset_orphan_node_field_update(
+    stk::mesh::FieldBase *theField,
+    const unsigned sizeRow,
+    const unsigned sizeCol);
 
   void swap_states();
 
@@ -285,6 +299,7 @@ public:
   bool has_nc_gauss_labatto_quadrature();
   NonConformalAlgType get_nc_alg_type();
   bool get_nc_alg_upwind_advection();
+  bool get_nc_alg_include_pstab();
 
   PropertyEvaluator *
   get_material_prop_eval(
@@ -310,6 +325,9 @@ public:
   bool get_activate_aura();
   stk::mesh::BulkData & bulk_data();
   stk::mesh::MetaData & meta_data();
+
+  // inactive part
+  stk::mesh::Selector get_inactive_selector();
 
   Realms& realms_;
 
@@ -390,8 +408,10 @@ public:
 
   ContactManager *contactManager_;
   NonConformalManager *nonConformalManager_;
+  OversetManager *oversetManager_;
   bool hasContact_;
   bool hasNonConformal_;
+  bool hasOverset_;
   bool hasTransfer_;
 
   PeriodicManager *periodicManager_;
@@ -427,6 +447,9 @@ public:
   // allow detailed output (memory) to be provided
   bool activateMemoryDiagnostic_;
 
+  // sometimes restarts can be missing states or dofs
+  bool supportInconsistentRestart_;
+
   // mesh parts for all boundary conditions
   stk::mesh::PartVector bcPartVec_;
 
@@ -453,6 +476,7 @@ public:
 
   // restart
   bool restarted_simulation();
+  bool support_inconsistent_restart();
 
   double get_stefan_boltzmann();
   double get_turb_model_constant(
