@@ -53,7 +53,12 @@ enum EquationType {
   EQ_MESH_DISPLACEMENT = 7,
   EQ_SPEC_DISS_RATE = 8,
   EQ_MASS_FRACTION = 9,
-  EQ_PNG = 10,
+  EQ_PNG   = 10,
+  EQ_PNG_P = 11,
+  EQ_PNG_Z = 12,
+  EQ_PNG_H = 13,
+  EQ_PNG_U = 14,
+  EQ_PNG_TKE = 15, // FIXME... Last PNG managed like this..
   EquationSystemType_END
 };
 
@@ -68,7 +73,12 @@ static const std::string EquationTypeMap[] = {
   "MeshVelocity",
   "Specific_Dissipation_Rate",
   "Mass_Fraction",
-  "PNG"
+  "PNG",
+  "PNG_P",
+  "PNG_Z",
+  "PNG_H",
+  "PNG_U",
+  "PNG_TKE"
 };
 
 enum UserDataType {
@@ -161,7 +171,8 @@ enum TurbulenceModelConstant {
   TM_sigmaWTwo = 16,
   TM_cmuCs = 17,
   TM_Cw = 18,
-  TM_END = 19
+  TM_CbTwo = 19,
+  TM_END = 20
 };
 
 static const std::string TurbulenceModelConstantNames[] = {
@@ -184,6 +195,7 @@ static const std::string TurbulenceModelConstantNames[] = {
   "sigmaWTwo",
   "cmuCs",
   "Cw",
+  "Cb2",
   "END"};
 
 enum NonConformalAlgType {

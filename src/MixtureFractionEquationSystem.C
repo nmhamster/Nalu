@@ -36,21 +36,24 @@
 #include <LinearSystem.h>
 #include <NaluEnv.h>
 #include <NaluParsing.h>
+#include <ProjectedNodalGradientEquationSystem.h>
 #include <Realm.h>
 #include <Realms.h>
 #include <ScalarGclNodeSuppAlg.h>
 #include <ScalarMassBackwardEulerNodeSuppAlg.h>
 #include <ScalarMassBDF2NodeSuppAlg.h>
 #include <ScalarMassBDF2ElemSuppAlg.h>
+#include <ScalarNSOElemSuppAlg.h>
+#include <ScalarKeNSOElemSuppAlg.h>
 #include <Simulation.h>
 #include <SolutionOptions.h>
 #include <TimeIntegrator.h>
 #include <SolverAlgorithmDriver.h>
 
 // user function
-#include <user_functions/SteadyTaylorVortexMixFracSrcElemSuppAlg.h>
-#include <user_functions/SteadyTaylorVortexMixFracSrcNodeSuppAlg.h>
-#include <user_functions/SteadyTaylorVortexMixFracAuxFunction.h>
+#include <user_functions/VariableDensityMixFracSrcElemSuppAlg.h>
+#include <user_functions/VariableDensityMixFracSrcNodeSuppAlg.h>
+#include <user_functions/VariableDensityMixFracAuxFunction.h>
 #include <user_functions/RayleighTaylorMixFracAuxFunction.h>
 
 // stk_util
@@ -87,9 +90,15 @@ namespace nalu{
 //-------- constructor -----------------------------------------------------
 //--------------------------------------------------------------------------
 MixtureFractionEquationSystem::MixtureFractionEquationSystem(
-    EquationSystems& eqSystems)
+  EquationSystems& eqSystems,
+  const bool outputClippingDiag,
+  const double deltaZClip)
   : EquationSystem(eqSystems, "MixtureFractionEQS"),
+    managePNG_(realm_.get_consistent_mass_matrix_png("mixture_fraction")),
+    outputClippingDiag_(outputClippingDiag),
+    deltaZClip_(deltaZClip),
     mixFrac_(NULL),
+    mixFracUF_(NULL),
     dzdx_(NULL),
     zTmp_(NULL),
     visc_(NULL),
@@ -99,6 +108,7 @@ MixtureFractionEquationSystem::MixtureFractionEquationSystem(
     scalarDiss_(NULL),
     assembleNodalGradAlgDriver_(new AssembleNodalGradAlgorithmDriver(realm_, "mixture_fraction", "dzdx")),
     diffFluxCoeffAlgDriver_(new AlgorithmDriver(realm_)),
+    projectedNodalGradEqs_(NULL),
     isInit_(true)
 {
   // extract solver name and solver object
@@ -115,6 +125,11 @@ MixtureFractionEquationSystem::MixtureFractionEquationSystem(
 
   // advertise as non uniform
   realm_.uniformFlow_ = false;
+
+  // create projected nodal gradient equation system
+  if ( managePNG_ ) {
+    manage_projected_nodal_gradient(eqSystems);
+  }
 }
 
 //--------------------------------------------------------------------------
@@ -153,6 +168,10 @@ MixtureFractionEquationSystem::register_nodal_fields(
   stk::mesh::put_field(*mixFrac_, *part);
   realm_.augment_restart_variable_list("mixture_fraction");
 
+  // for a sanity check, keep around the un-filterd/clipped field
+  mixFracUF_ =  &(meta_data.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "uf_mixture_fraction", numStates));
+  stk::mesh::put_field(*mixFracUF_, *part);
+ 
   dzdx_ =  &(meta_data.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "dzdx"));
   stk::mesh::put_field(*dzdx_, *part, nDim);
 
@@ -206,20 +225,22 @@ MixtureFractionEquationSystem::register_interior_algorithm(
   VectorFieldType &dzdxNone = dzdx_->field_of_state(stk::mesh::StateNone);
 
   // non-solver; contribution to projected nodal gradient; allow for element-based shifted
-  std::map<AlgorithmType, Algorithm *>::iterator it
-    = assembleNodalGradAlgDriver_->algMap_.find(algType);
-  if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
-    Algorithm *theAlg = NULL;
-    if ( edgeNodalGradient_ && realm_.realmUsesEdges_ ) {
-      theAlg = new AssembleNodalGradEdgeAlgorithm(realm_, part, &mixFracNp1, &dzdxNone);
+  if ( !managePNG_ ) {
+    std::map<AlgorithmType, Algorithm *>::iterator it
+      = assembleNodalGradAlgDriver_->algMap_.find(algType);
+    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+      Algorithm *theAlg = NULL;
+      if ( edgeNodalGradient_ && realm_.realmUsesEdges_ ) {
+        theAlg = new AssembleNodalGradEdgeAlgorithm(realm_, part, &mixFracNp1, &dzdxNone);
+      }
+      else {
+        theAlg = new AssembleNodalGradElemAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
+      }
+      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
     }
     else {
-      theAlg = new AssembleNodalGradElemAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
-    }
-    assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
-  }
-  else {
-    it->second->partVec_.push_back(part);
+      it->second->partVec_.push_back(part);
+    } 
   }
 
   // solver; interior edge contribution (advection + diffusion)
@@ -244,20 +265,40 @@ MixtureFractionEquationSystem::register_interior_algorithm(
       for (size_t k = 0; k < mapNameVec.size(); ++k ) {
         std::string sourceName = mapNameVec[k];
         SupplementalAlgorithm *suppAlg = NULL;
-        if (sourceName == "SteadyTaylorVortex" ) {
-          suppAlg = new SteadyTaylorVortexMixFracSrcElemSuppAlg(realm_);
+        if (sourceName == "VariableDensity" ) {
+          suppAlg = new VariableDensityMixFracSrcElemSuppAlg(realm_);
+        }
+        else if (sourceName == "NSO_2ND" ) {
+          suppAlg = new ScalarNSOElemSuppAlg(realm_, mixFrac_, dzdx_, evisc_, 0.0, 0.0);
+        }
+        else if (sourceName == "NSO_2ND_ALT" ) {
+          suppAlg = new ScalarNSOElemSuppAlg(realm_, mixFrac_, dzdx_, evisc_, 0.0, 1.0);
+        }
+        else if (sourceName == "NSO_4TH" ) {
+          suppAlg = new ScalarNSOElemSuppAlg(realm_, mixFrac_, dzdx_, evisc_, 1.0, 0.0);
+        }
+        else if (sourceName == "NSO_4TH_ALT" ) {
+          suppAlg = new ScalarNSOElemSuppAlg(realm_, mixFrac_, dzdx_, evisc_, 1.0, 1.0);
+        }
+        else if (sourceName == "NSO_KE_2ND" ) {
+          const double turbSc = realm_.get_turb_schmidt(mixFrac_->name());
+          suppAlg = new ScalarKeNSOElemSuppAlg(realm_, mixFrac_, dzdx_, turbSc, 0.0);
+        }
+        else if (sourceName == "NSO_KE_4TH" ) {
+          const double turbSc = realm_.get_turb_schmidt(mixFrac_->name());
+          suppAlg = new ScalarKeNSOElemSuppAlg(realm_, mixFrac_, dzdx_, turbSc, 1.0);
         }
         else if (sourceName == "mixture_fraction_time_derivative" ) {
           useCMM = true;
           if ( realm_.number_of_states() == 2 ) {
-            throw std::runtime_error("ElemSrcTermsError::CMM Backward Euler not supported");
+            throw std::runtime_error("ElemSrcTermsError::mixture_fraction_time_derivative requires BDF2 activation");
           }
           else {
             suppAlg = new ScalarMassBDF2ElemSuppAlg(realm_, mixFrac_);
           } 
         }
         else {
-          throw std::runtime_error("ElemSrcTermsError::only support SteadyTV and time term");
+          throw std::runtime_error("ElemSrcTermsError::only support VariableDensity, NSO and time term");
         }     
         theAlg->supplementalAlg_.push_back(suppAlg); 
       }
@@ -302,8 +343,8 @@ MixtureFractionEquationSystem::register_interior_algorithm(
         if ( sourceName == "gcl" ) {
           suppAlg = new ScalarGclNodeSuppAlg(mixFrac_,realm_);
         }
-        else if ( sourceName == "SteadyTaylorVortex" ) {
-          suppAlg = new SteadyTaylorVortexMixFracSrcNodeSuppAlg(realm_);
+        else if ( sourceName == "VariableDensity" ) {
+          suppAlg = new VariableDensityMixFracSrcNodeSuppAlg(realm_);
         }
         else {
           throw std::runtime_error("MixtureFractionEquationSystem::only gcl source term(s) are supported");
@@ -371,11 +412,11 @@ MixtureFractionEquationSystem::register_inflow_bc(
   }
   else if ( FUNCTION_UD == theDataType ) {
     std::string fcnName = get_bc_function_name(userData, mixFracName);
-    if ( fcnName == "SteadyTaylorVortex" ) {
-      theAuxFunc = new SteadyTaylorVortexMixFracAuxFunction();
+    if ( fcnName == "VariableDensity" ) {
+      theAuxFunc = new VariableDensityMixFracAuxFunction();
     }
     else {
-      throw std::runtime_error("MixFracEquationSystem::register_inflow_bc: Only SteadyTaylorVortex supported");
+      throw std::runtime_error("MixFracEquationSystem::register_inflow_bc: Only VariableDensity supported");
     }
   }
   else {
@@ -399,15 +440,17 @@ MixtureFractionEquationSystem::register_inflow_bc(
   bcDataMapAlg_.push_back(theCopyAlg);
 
   // non-solver; dzdx; allow for element-based shifted
-  std::map<AlgorithmType, Algorithm *>::iterator it
-    = assembleNodalGradAlgDriver_->algMap_.find(algType);
-  if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
-    Algorithm *theAlg 
-      = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
-    assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
-  }
-  else {
-    it->second->partVec_.push_back(part);
+  if ( !managePNG_ ) {
+    std::map<AlgorithmType, Algorithm *>::iterator it
+      = assembleNodalGradAlgDriver_->algMap_.find(algType);
+    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+      Algorithm *theAlg 
+        = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
+      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+    }
+    else {
+      it->second->partVec_.push_back(part);
+    }
   }
 
   // Dirichlet bc
@@ -463,15 +506,17 @@ MixtureFractionEquationSystem::register_open_bc(
   bcDataAlg_.push_back(auxAlg);
 
   // non-solver; dzdx; allow for element-based shifted
-  std::map<AlgorithmType, Algorithm *>::iterator it
-    = assembleNodalGradAlgDriver_->algMap_.find(algType);
-  if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
-    Algorithm *theAlg 
-      = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
-    assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
-  }
-  else {
-    it->second->partVec_.push_back(part);
+  if ( !managePNG_ ) {
+    std::map<AlgorithmType, Algorithm *>::iterator it
+      = assembleNodalGradAlgDriver_->algMap_.find(algType);
+    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+      Algorithm *theAlg 
+        = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
+      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+    }
+    else {
+      it->second->partVec_.push_back(part);
+    }
   }
 
   // now solver contributions; open; lhs
@@ -560,17 +605,18 @@ MixtureFractionEquationSystem::register_wall_bc(
   }
 
   // non-solver; dzdx; allow for element-based shifted
- std::map<AlgorithmType, Algorithm *>::iterator it
-   = assembleNodalGradAlgDriver_->algMap_.find(algType);
- if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
-   Algorithm *theAlg 
-     = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
-   assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
- }
- else {
-   it->second->partVec_.push_back(part);
- }
-
+  if ( !managePNG_ ) {
+    std::map<AlgorithmType, Algorithm *>::iterator it
+      = assembleNodalGradAlgDriver_->algMap_.find(algType);
+    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+      Algorithm *theAlg 
+        = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
+      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+    }
+    else {
+      it->second->partVec_.push_back(part);
+    }
+  }
 }
 
 //--------------------------------------------------------------------------
@@ -598,20 +644,22 @@ MixtureFractionEquationSystem::register_contact_bc(
     }
 
     // non-solver; contribution to dzdx
-    std::map<AlgorithmType, Algorithm *>::iterator it =
-      assembleNodalGradAlgDriver_->algMap_.find(algType);
-    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
-      Algorithm *theAlg = NULL;
-      if ( edgeNodalGradient_ ) {
-        theAlg = new AssembleNodalGradEdgeContactAlgorithm(realm_, part, &mixFracNp1, &dzdxNone);
+    if ( !managePNG_ ) {
+      std::map<AlgorithmType, Algorithm *>::iterator it =
+        assembleNodalGradAlgDriver_->algMap_.find(algType);
+      if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+        Algorithm *theAlg = NULL;
+        if ( edgeNodalGradient_ ) {
+          theAlg = new AssembleNodalGradEdgeContactAlgorithm(realm_, part, &mixFracNp1, &dzdxNone);
+        }
+        else {
+          theAlg = new AssembleNodalGradElemContactAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, haloZ);
+        }
+        assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
       }
       else {
-        theAlg = new AssembleNodalGradElemContactAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, haloZ);
+        it->second->partVec_.push_back(part);
       }
-      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
-    }
-    else {
-      it->second->partVec_.push_back(part);
     }
 
     // solver; lhs
@@ -650,17 +698,18 @@ MixtureFractionEquationSystem::register_symmetry_bc(
   VectorFieldType &dzdxNone = dzdx_->field_of_state(stk::mesh::StateNone);
 
   // non-solver; dzdx; allow for element-based shifted
-  std::map<AlgorithmType, Algorithm *>::iterator it
-    = assembleNodalGradAlgDriver_->algMap_.find(algType);
-  if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
-    Algorithm *theAlg 
-      = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
-    assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+  if ( !managePNG_ ) {
+    std::map<AlgorithmType, Algorithm *>::iterator it
+      = assembleNodalGradAlgDriver_->algMap_.find(algType);
+    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+      Algorithm *theAlg 
+        = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
+      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+    }
+    else {
+      it->second->partVec_.push_back(part);
+    }
   }
-  else {
-    it->second->partVec_.push_back(part);
-  }
-
 }
 
 //--------------------------------------------------------------------------
@@ -679,29 +728,31 @@ MixtureFractionEquationSystem::register_non_conformal_bc(
   VectorFieldType &dzdxNone = dzdx_->field_of_state(stk::mesh::StateNone);
 
   // non-solver; contribution to dzdx; DG algorithm decides on locations for integration points
-  if ( edgeNodalGradient_ ) {    
-    std::map<AlgorithmType, Algorithm *>::iterator it
-      = assembleNodalGradAlgDriver_->algMap_.find(algType);
-    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
-      Algorithm *theAlg 
-        = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
-      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+  if ( !managePNG_ ) {
+    if ( edgeNodalGradient_ ) {    
+      std::map<AlgorithmType, Algorithm *>::iterator it
+        = assembleNodalGradAlgDriver_->algMap_.find(algType);
+      if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+        Algorithm *theAlg 
+          = new AssembleNodalGradBoundaryAlgorithm(realm_, part, &mixFracNp1, &dzdxNone, edgeNodalGradient_);
+        assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+      }
+      else {
+        it->second->partVec_.push_back(part);
+      }
     }
     else {
-      it->second->partVec_.push_back(part);
-    }
-  }
-  else {
-    // proceed with DG
-    std::map<AlgorithmType, Algorithm *>::iterator it
-      = assembleNodalGradAlgDriver_->algMap_.find(algType);
-    if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
-      AssembleNodalGradNonConformalAlgorithm *theAlg 
-        = new AssembleNodalGradNonConformalAlgorithm(realm_, part, &mixFracNp1, &dzdxNone);
-      assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
-    }
-    else {
-      it->second->partVec_.push_back(part);
+      // proceed with DG
+      std::map<AlgorithmType, Algorithm *>::iterator it
+        = assembleNodalGradAlgDriver_->algMap_.find(algType);
+      if ( it == assembleNodalGradAlgDriver_->algMap_.end() ) {
+        AssembleNodalGradNonConformalAlgorithm *theAlg 
+          = new AssembleNodalGradNonConformalAlgorithm(realm_, part, &mixFracNp1, &dzdxNone);
+        assembleNodalGradAlgDriver_->algMap_[algType] = theAlg;
+      }
+      else {
+        it->second->partVec_.push_back(part);
+      }
     }
   }
   
@@ -783,16 +834,16 @@ MixtureFractionEquationSystem::register_initial_condition_fcn(
   if (iterName != theNames.end()) {
     std::string fcnName = (*iterName).second;
     AuxFunction *theAuxFunc = NULL;
-    if ( fcnName == "SteadyTaylorVortex" ) {
+    if ( fcnName == "VariableDensity" ) {
       // create the function
-      theAuxFunc = new SteadyTaylorVortexMixFracAuxFunction();      
+      theAuxFunc = new VariableDensityMixFracAuxFunction();      
     }
     else if ( fcnName == "RayleighTaylor" ) {
       // create the function
       theAuxFunc = new RayleighTaylorMixFracAuxFunction();      
     }
     else {
-      throw std::runtime_error("MixtureFractionEquationSystem::register_initial_condition_fcn: steady_tv only supported");
+      throw std::runtime_error("MixtureFractionEquationSystem::register_initial_condition_fcn: VariableDensity only supported");
     }
     
     // create the algorithm
@@ -816,7 +867,7 @@ MixtureFractionEquationSystem::solve_and_update()
 
   // compute dz/dx
   if ( isInit_ ) {
-    assembleNodalGradAlgDriver_->execute();
+    compute_projected_nodal_gradient();
     isInit_ = false;
   }
 
@@ -833,27 +884,12 @@ MixtureFractionEquationSystem::solve_and_update()
 
     // update
     double timeA = stk::cpu_time();
-    const bool doClip = true;
-    if ( doClip ) {
-      update_and_clip();
-    }
-    else {
-      field_axpby(
-        realm_.meta_data(),
-        realm_.bulk_data(),
-        1.0, *zTmp_,
-        1.0, mixFrac_->field_of_state(stk::mesh::StateNP1),
-        realm_.get_activate_aura());
-    }
+    update_and_clip();
     double timeB = stk::cpu_time();
     timerAssemble_ += (timeB-timeA);
 
     // projected nodal gradient
-    timeA = stk::cpu_time();
-    assembleNodalGradAlgDriver_->execute();
-    timeB = stk::cpu_time();
-    timerMisc_ += (timeB-timeA);
-
+    compute_projected_nodal_gradient();
   }
 
   compute_scalar_var_diss();
@@ -874,7 +910,7 @@ MixtureFractionEquationSystem::post_iter_work()
 void
 MixtureFractionEquationSystem::update_and_clip()
 {
-  const double deltaZ = 0.0;
+  const double deltaZ = deltaZClip_;
   const double lowBound = 0.0-deltaZ;
   const double highBound = 1.0+deltaZ;
   size_t numClip[2] = {0,0};
@@ -896,10 +932,14 @@ MixtureFractionEquationSystem::update_and_clip()
     const stk::mesh::Bucket::size_type length   = b.size();
 
     double *mixFrac = stk::mesh::field_data(*mixFrac_, b);
+    double *mixFracUF = stk::mesh::field_data(*mixFracUF_, b);
     double *zTmp    = stk::mesh::field_data(*zTmp_, b);
 
     for ( stk::mesh::Bucket::size_type k = 0 ; k < length ; ++k ) {
       double mixFracNp1 = mixFrac[k] + zTmp[k];
+      // store un-filtered value for numerical methods development purposes
+      mixFracUF[k] = mixFracNp1;
+      // clip now
       if ( mixFracNp1 < lowBound ) {
         minZ = std::min(mixFracNp1, minZ);
         mixFracNp1 = lowBound;
@@ -915,7 +955,7 @@ MixtureFractionEquationSystem::update_and_clip()
   }
 
   // parallel assemble clipped value
-  if ( realm_.debug() ) {
+  if ( outputClippingDiag_ ) {
     size_t g_numClip[2] = {};
     stk::ParallelMachine comm = NaluEnv::self().parallel_comm();
     stk::all_reduce_sum(comm, numClip, g_numClip, 2);
@@ -925,11 +965,17 @@ MixtureFractionEquationSystem::update_and_clip()
       stk::all_reduce_min(comm, &minZ, &g_minZ, 1);
       NaluEnv::self().naluOutputP0() << "mixFrac clipped (-) " << g_numClip[0] << " times; min: " << g_minZ << std::endl;
     }
+    else {
+      NaluEnv::self().naluOutputP0() << "mixFrac clipped (-) zero times" << std::endl;
+    }
 
     if ( g_numClip[1] > 0 ) {
       double g_maxZ = 0;
       stk::all_reduce_max(comm, &maxZ, &g_maxZ, 1);
-      NaluEnv::self().naluOutputP0() << "mixFrac clipped (+) " << g_numClip[1] << " times; min: " << g_maxZ << std::endl;
+      NaluEnv::self().naluOutputP0() << "mixFrac clipped (+) " << g_numClip[1] << " times; max: " << g_maxZ << std::endl;
+    }
+    else {
+      NaluEnv::self().naluOutputP0() << "mixFrac clipped (+) zero times" << std::endl;
     }
   }
 }
@@ -980,6 +1026,9 @@ MixtureFractionEquationSystem::compute_scalar_var_diss()
   }
 }
 
+//--------------------------------------------------------------------------
+//-------- predict_state ---------------------------------------------------
+//--------------------------------------------------------------------------
 void
 MixtureFractionEquationSystem::predict_state()
 {
@@ -987,6 +1036,40 @@ MixtureFractionEquationSystem::predict_state()
   ScalarFieldType &zN = mixFrac_->field_of_state(stk::mesh::StateN);
   ScalarFieldType &zNp1 = mixFrac_->field_of_state(stk::mesh::StateNP1);
   field_copy(realm_.meta_data(), realm_.bulk_data(), zN, zNp1, realm_.get_activate_aura());
+}
+
+//--------------------------------------------------------------------------
+//-------- manage_projected_nodal_gradient ---------------------------------
+//--------------------------------------------------------------------------
+void
+MixtureFractionEquationSystem::manage_projected_nodal_gradient(
+  EquationSystems& eqSystems)
+{
+  if ( NULL == projectedNodalGradEqs_ ) {
+    projectedNodalGradEqs_ 
+      = new ProjectedNodalGradientEquationSystem(eqSystems, EQ_PNG_Z, "dzdx", "qTmp", "mixture_fraction", "PNGradZEQS");
+  }
+  // fill the map for expected boundary condition names; can be more complex...
+  projectedNodalGradEqs_->set_data_map(INFLOW_BC, "mixture_fraction");
+  projectedNodalGradEqs_->set_data_map(WALL_BC, "mixture_fraction");
+  projectedNodalGradEqs_->set_data_map(OPEN_BC, "mixture_fraction");
+  projectedNodalGradEqs_->set_data_map(SYMMETRY_BC, "mixture_fraction");
+}
+
+//--------------------------------------------------------------------------
+//-------- compute_projected_nodal_gradient---------------------------------
+//--------------------------------------------------------------------------
+void
+MixtureFractionEquationSystem::compute_projected_nodal_gradient()
+{
+  if ( !managePNG_ ) {
+    const double timeA = -stk::cpu_time();
+    assembleNodalGradAlgDriver_->execute();
+    timerMisc_ += (stk::cpu_time() + timeA);
+  }
+  else {
+    projectedNodalGradEqs_->solve_and_update_external();
+  }
 }
 
 } // namespace nalu

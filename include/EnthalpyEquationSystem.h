@@ -26,6 +26,7 @@ class AssembleNodalGradAlgorithmDriver;
 class AssembleWallHeatTransferAlgorithmDriver;
 class LinearSystem;
 class EquationSystems;
+class ProjectedNodalGradientEquationSystem;
 class TemperaturePropAlgorithm;
 
 class EnthalpyEquationSystem : public EquationSystem {
@@ -35,7 +36,8 @@ public:
   EnthalpyEquationSystem(
     EquationSystems& equationSystems,
     const double minT,
-    const double maxT);
+    const double maxT,
+    const bool outputClippingDiag);
   virtual ~EnthalpyEquationSystem();
   
   virtual void register_nodal_fields(
@@ -77,7 +79,12 @@ public:
 
   void initialize();
   void reinitialize_linear_system();
-  
+
+  virtual void register_initial_condition_fcn(
+      stk::mesh::Part *part,
+      const std::map<std::string, std::string> &theNames,
+      const std::map<std::string, std::vector<double> > &theParams);
+
   void predict_state();
   
   void solve_and_update();
@@ -88,16 +95,23 @@ public:
   void initial_work();
   
   void temperature_bc_setup(
-    std::vector<double> userSpecData,
+    UserData userData,
     stk::mesh::Part *part,
     ScalarFieldType *temperatureBc,
     ScalarFieldType *enthalpyBc,
     const bool isInterface = false,
     const bool copyBcVal = true);
   
+  void manage_projected_nodal_gradient(
+    EquationSystems& eqSystems);
+  void compute_projected_nodal_gradient();
+
   const double minimumT_;
   const double maximumT_;
-  
+
+  const bool managePNG_;
+  const bool outputClippingDiag_;
+
   ScalarFieldType *enthalpy_;
   ScalarFieldType *temperature_;
   VectorFieldType *dhdx_;
@@ -116,6 +130,9 @@ public:
   
   bool pmrCouplingActive_;
   bool lowSpeedCompressActive_;
+
+  ProjectedNodalGradientEquationSystem *projectedNodalGradEqs_;
+
   bool isInit_;
 
   std::vector<TemperaturePropAlgorithm *> enthalpyFromTemperatureAlg_;

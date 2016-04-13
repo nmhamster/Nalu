@@ -66,6 +66,8 @@ public:
 
   virtual void sumInto(
     const std::vector<stk::mesh::Entity> & sym_meshobj,
+    std::vector<int> &scratchIds,
+    std::vector<double> &scratchVals,
     const std::vector<double> & rhs,
     const std::vector<double> & lhs,
     const char *trace_tag=0
@@ -88,13 +90,18 @@ public:
 
   virtual void writeToFile(const char * filename, bool useOwned=true)=0;
   virtual void writeSolutionToFile(const char * filename, bool useOwned=true)=0;
-  /*const*/ unsigned numDof() const { return numDof_; }
+  unsigned numDof() const { return numDof_; }
   const int & linearSolveIterations() {return linearSolveIterations_; }
   const double & linearResidual() {return linearResidual_; }
   const double & nonLinearResidual() {return nonLinearResidual_; }
   const double & scaledNonLinearResidual() {return scaledNonLinearResidual_; }
+  void setNonLinearResidual(const double nlr) { nonLinearResidual_ = nlr;}
+  const std::string name() { return name_; }
   bool & recomputePreconditioner() {return recomputePreconditioner_;}
   bool & reusePreconditioner() {return reusePreconditioner_;}
+  double get_timer_precond();
+  void zero_timer_precond();
+
 protected:
   virtual void beginLinearSystemConstruction()=0;
   virtual void checkError(
@@ -121,9 +128,7 @@ protected:
 
 public:
   bool provideOutput_;
-
 };
-
 
 } // namespace nalu
 } // namespace Sierra

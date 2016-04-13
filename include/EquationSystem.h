@@ -26,6 +26,7 @@ namespace nalu{
 class Algorithm;
 class AlgorithmDriver;
 class AuxFunctionAlgorithm;
+class PecletFunction;
 class Realm;
 class SolverAlgorithmDriver;
 class InitialCondition;
@@ -133,7 +134,10 @@ public:
 
   // rip through the propertyAlg_
   virtual void evaluate_properties();
- 
+
+  // provide helper function for Peclet function
+  PecletFunction * create_peclet_function( const std::string dofName);
+
   virtual void load(const YAML::Node & node)
   {
     get_required(node, "name", name_);
@@ -157,7 +161,8 @@ public:
   double timerLoadComplete_;
   double timerSolve_;
   double timerMisc_;
-
+  double timerInit_;
+  double timerPrecond_;
   double avgLinearIterations_;
   double maxLinearIterations_;
   double minLinearIterations_;

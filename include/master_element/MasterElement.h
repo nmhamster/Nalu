@@ -61,6 +61,13 @@ public:
     double * error ) {
     throw std::runtime_error("grad_op not implemented");}
 
+  virtual void gij(
+    const double *coords,
+    double *gupperij,
+    double *glowerij,
+    double *deriv) {
+    throw std::runtime_error("gij not implemented");}
+
   virtual void nodal_grad_op(
     const int nelem,
     double *deriv,
@@ -153,6 +160,8 @@ public:
     throw std::runtime_error("edgeAlignedArea not implement"); }
 
   double isoparametric_mapping(const double b, const double a, const double xi) const;
+  bool within_tolerance(const double & val, const double & tol);
+  double vector_norm_sq(const double * vect, int len);
 
   int nDim_;
   int nodesPerElement_;
@@ -191,8 +200,18 @@ public:
     const double *coords,
     double *volume,
     double * error );
-};
 
+  void grad_op(
+    const int nelem,
+    const double *coords,
+    double *gradop,
+    double *deriv,
+    double *det_j,
+    double * error );
+
+  void shape_fcn(
+    double *shpfc);
+};
 
 // Hex 8 subcontrol surface
 class HexSCS : public MasterElement
@@ -233,6 +252,12 @@ public:
     double *gradop,
     double *det_j,
     double * error );
+
+  void gij(
+    const double *coords,
+    double *gupperij,
+    double *glowerij,
+    double *deriv);
 
   const int * adjacentNodes();
 
@@ -286,9 +311,7 @@ public:
   const double * edgeAlignedArea();
   
   // helper
-  double vector_norm( const double * vect, int len );
   double parametric_distance(const std::vector<double> &x);
-  bool within_tol( const double & val, const double & tol );
 };
 
 class HexahedralP2Element : public MasterElement
@@ -298,7 +321,7 @@ public:
   virtual ~HexahedralP2Element() {}
 
   void shape_fcn(double *shpfc);
-  void shifted_shape_fcn(double *shpfc)  { throw std::runtime_error("shifted shape functions not implemented"); };
+  void shifted_shape_fcn(double *shpfc);
 
 protected:
   struct ContourData {
@@ -312,6 +335,10 @@ protected:
     int nodeOrdinal,
     int gaussPointOrdinal) const;
 
+  double shifted_gauss_point_location(
+    int nodeOrdinal,
+    int gaussPointOrdinal) const;
+
   double tensor_product_weight(
     int s1Node, int s2Node, int s3Node,
     int s1Ip, int s2Ip, int s3Ip) const;
@@ -321,10 +348,15 @@ protected:
     int s1Ip, int s2Ip) const;
 
   virtual void eval_shape_functions_at_ips();
+  virtual void eval_shape_functions_at_shifted_ips();
 
   virtual void eval_shape_derivs_at_ips();
+  virtual void eval_shape_derivs_at_shifted_ips();
 
   void eval_shape_derivs_at_face_ips();
+
+  void set_quadrature_rule();
+  void GLLGLL_quadrature_weights();
 
   const double scsDist_;
   const bool useGLLGLL_;
@@ -332,14 +364,18 @@ protected:
   const int numQuad_;
 
   // quadrature info
+  std::vector<double> gaussAbscissae1D_;
   std::vector<double> gaussAbscissae_;
+  std::vector<double> gaussAbscissaeShift_;
   std::vector<double> gaussWeight_;
   std::vector<double> scsEndLoc_;
 
   std::vector<int> stkNodeMap_;
 
   std::vector<double> shapeFunctions_;
+  std::vector<double> shapeFunctionsShift_;
   std::vector<double> shapeDerivs_;
+  std::vector<double> shapeDerivsShift_;
   std::vector<double> expFaceShapeDerivs_;
 
 private:
@@ -402,6 +438,14 @@ public:
     double *det_j,
     double * error );
 
+  void shifted_grad_op(
+    const int nelem,
+    const double *coords,
+    double *gradop,
+    double *deriv,
+    double *det_j,
+    double * error );
+
   void face_grad_op(
     const int nelem,
     const int face_ordinal,
@@ -409,6 +453,12 @@ public:
     double *gradop,
     double *det_j,
     double * error );
+
+  void gij(
+    const double *coords,
+    double *gupperij,
+    double *glowerij,
+    double *deriv);
 
   const int * adjacentNodes();
 
@@ -496,6 +546,12 @@ public:
     double *gradop,
     double *det_j,
     double * error );
+
+  void gij(
+    const double *coords,
+    double *gupperij,
+    double *glowerij,
+    double *deriv);
 
   const int * adjacentNodes();
 
@@ -602,6 +658,12 @@ public:
     const double *intLoc,
     double *deriv);
 
+  void gij(
+    const double *coords,
+    double *gupperij,
+    double *glowerij,
+    double *deriv);
+
   const int * adjacentNodes();
 
   void shape_fcn(
@@ -679,6 +741,12 @@ public:
     double *det_j,
     double * error );
 
+  void gij(
+    const double *coords,
+    double *gupperij,
+    double *glowerij,
+    double *deriv);
+
   const int * adjacentNodes();
 
   int opposingNodes(
@@ -692,11 +760,26 @@ public:
 
   void shifted_shape_fcn(
     double *shpfc);
+
+  double isInElement(
+    const double *elemNodalCoord,
+    const double *pointCoord,
+    double *isoParCoord);
+
+  void interpolatePoint(
+    const int &nComp,
+    const double *isoParCoord,
+    const double *field,
+    double *result);
   
-  void wed_shape_fcn(
+  void wedge_shape_fcn(
     const int &npts,
     const double *par_coord, 
     double* shape_fcn);
+
+  // helper functions to isInElement
+  double parametric_distance( const double X, const double Y);
+  double parametric_distance( const std::vector<double> &x);
 };
 
 // 2D Quad 4 subcontrol volume
@@ -713,6 +796,17 @@ public:
     const double *coords,
     double *areav,
     double * error );
+
+  void shape_fcn(
+    double *shpfc);
+
+  void shifted_shape_fcn(
+    double *shpfc);
+  
+  void quad_shape_fcn(
+    const int &npts,
+    const double *par_coord, 
+    double* shape_fcn);
 };
 
 // 2D Quad 4 subcontrol surface
@@ -729,8 +823,6 @@ public:
     const double *coords,
     double *areav,
     double * error );
-
-  const int * adjacentNodes();
 
   void grad_op(
     const int nelem,
@@ -755,6 +847,14 @@ public:
     double *gradop,
     double *det_j,
     double * error );
+
+  void gij(
+     const double *coords,
+     double *gupperij,
+     double *gij,
+     double *deriv);
+
+  const int * adjacentNodes();
 
   int opposingNodes(
     const int ordinal, const int node);
@@ -818,17 +918,23 @@ public:
   virtual ~QuadrilateralP2Element() {}
 
   void shape_fcn(double *shpfc);
-  void shifted_shape_fcn(double *shpfc)  { throw std::runtime_error("shifted shape functions not implemented"); };
-
+  void shifted_shape_fcn(double *shpfc);
 protected:
   struct ContourData {
     Jacobian::Direction direction;
     double weight;
   };
 
+  void set_quadrature_rule();
+  void GLLGLL_quadrature_weights();
+
   int tensor_product_node_map(int i, int j) const;
 
   double gauss_point_location(
+    int nodeOrdinal,
+    int gaussPointOrdinal) const;
+
+  double shifted_gauss_point_location(
     int nodeOrdinal,
     int gaussPointOrdinal) const;
 
@@ -839,25 +945,32 @@ protected:
   double tensor_product_weight(int s1Node, int s1Ip) const;
 
   void eval_shape_functions_at_ips();
+  void eval_shape_functions_at_shifted_ips();
+
   void eval_shape_derivs_at_ips();
+  void eval_shape_derivs_at_shifted_ips();
+
   void eval_shape_derivs_at_face_ips();
 
   const double scsDist_;
-  const bool useGLLGLL_;
+  bool useGLLGLL_;
   const int nodes1D_;
-  const int numQuad_;
+  int numQuad_;
 
   //quadrature info
+  std::vector<double> gaussAbscissae1D_;
   std::vector<double> gaussAbscissae_;
+  std::vector<double> gaussAbscissaeShift_;
   std::vector<double> gaussWeight_;
 
   std::vector<int> stkNodeMap_;
   std::vector<double> scsEndLoc_;
 
   std::vector<double> shapeFunctions_;
+  std::vector<double> shapeFunctionsShift_;
   std::vector<double> shapeDerivs_;
+  std::vector<double> shapeDerivsShift_;
   std::vector<double> expFaceShapeDerivs_;
-
 private:
   void quad9_shape_fcn(
     int npts,
@@ -918,6 +1031,14 @@ public:
     double *det_j,
     double * error );
 
+  void shifted_grad_op(
+    const int nelem,
+    const double *coords,
+    double *gradop,
+    double *deriv,
+    double *det_j,
+    double * error );
+
   void face_grad_op(
     const int nelem,
     const int face_ordinal,
@@ -925,6 +1046,12 @@ public:
     double *gradop,
     double *det_j,
     double * error );
+
+  void gij(
+    const double *coords,
+    double *gupperij,
+    double *glowerij,
+    double *deriv);
 
   const int * adjacentNodes();
 
@@ -1005,6 +1132,12 @@ public:
     double *gradop,
     double *det_j,
     double * error );
+
+  void gij(
+    const double *coords,
+    double *gupperij,
+    double *glowerij,
+    double *deriv);
 
   const int * adjacentNodes();
 
@@ -1093,10 +1226,6 @@ public:
     const double *isoParCoord,
     double *shpfc);
 
-  bool within_tol( const double & val, const double & tol );
-  
-  double vector_norm2( const double * vect, int len );
-
   void non_unit_face_normal(
     const double * par_coord,
     const double * elem_nodal_coor,
@@ -1122,10 +1251,24 @@ public:
     double *areav,
     double * error );
 
+  double isInElement(
+    const double *elemNodalCoord,
+    const double *pointCoord,
+    double *isoParCoord);
+
+  void interpolatePoint(
+    const int &nComp,
+    const double *isoParCoord,
+    const double *field,
+    double *result);
+
 private:
   void set_interior_info();
-  void eval_shape_functions_at_ips();
-  void eval_shape_derivs_at_ips();
+  void eval_shape_functions_at_ips() final;
+  void eval_shape_derivs_at_ips() final;
+
+  void eval_shape_functions_at_shifted_ips() final;
+  void eval_shape_derivs_at_shifted_ips() final;
 
   void area_vector(
     const double *coords,
@@ -1143,6 +1286,13 @@ private:
     const double *par_coord,
     double* shape_fcn
   ) const;
+
+  void non_unit_face_normal(
+    const double *isoParCoord,
+    const double *elemNodalCoord,
+    double *normalVector);
+
+  double parametric_distance(const std::vector<double> &x);
 
   std::vector<double> ipWeight_;
   const int surfaceDimension_;

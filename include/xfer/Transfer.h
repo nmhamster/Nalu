@@ -24,6 +24,7 @@
 namespace stk {
 namespace mesh {
 class Part;
+typedef std::vector<Part*> PartVector;
 }
 }
 
@@ -65,13 +66,21 @@ public:
   // during load
   std::string name_;
   std::string transferType_;
+  std::string transferObjective_;
   std::string searchMethodName_;
+  double searchTolerance_;
+  double searchExpansionFactor_;
   std::pair<std::string, std::string> realmPairName_;
-  std::pair<std::string, std::string> meshPartPairName_;
+  
+  // allow the user to provide a vector "from" and "to" parts; names
+  std::vector<std::string> fromPartNameVec_;
+  std::vector<std::string> toPartNameVec_;
+  // actual parts
+  stk::mesh::PartVector fromPartVec_;
+  stk::mesh::PartVector toPartVec_;
 
+  // all of the fields
   std::vector<std::pair<std::string, std::string> > transferVariablesPairName_;
-
-  std::pair<const stk::mesh::Part *, const stk::mesh::Part *> meshPartPair_;
 
   void allocate_stk_transfer();
   void ghost_from_elements();

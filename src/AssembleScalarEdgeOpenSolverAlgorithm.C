@@ -48,13 +48,11 @@ AssembleScalarEdgeOpenSolverAlgorithm::AssembleScalarEdgeOpenSolverAlgorithm(
     dqdx_(dqdx),
     diffFluxCoeff_(diffFluxCoeff),
     coordinates_(NULL),
-    density_(NULL),
     openMassFlowRate_(NULL)
 {
   // save off fields
   stk::mesh::MetaData & meta_data = realm_.meta_data();
   coordinates_ = meta_data.get_field<VectorFieldType>(stk::topology::NODE_RANK, realm_.get_coordinates_name());
-  density_ = meta_data.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "density");
   openMassFlowRate_ = meta_data.get_field<GenericFieldType>(meta_data.side_rank(), "open_mass_flow_rate");
 }
 
@@ -80,6 +78,8 @@ AssembleScalarEdgeOpenSolverAlgorithm::execute()
   // space for LHS/RHS; nodesPerElement*nodesPerElement and nodesPerElement
   std::vector<double> lhs;
   std::vector<double> rhs;
+  std::vector<int> scratchIds;
+  std::vector<double> scratchVals;
   std::vector<stk::mesh::Entity> connected_nodes;
 
   // deal with state
@@ -117,6 +117,8 @@ AssembleScalarEdgeOpenSolverAlgorithm::execute()
     const int rhsSize = nodesPerElement;
     lhs.resize(lhsSize);
     rhs.resize(rhsSize);
+    scratchIds.resize(rhsSize);
+    scratchVals.resize(rhsSize);
     connected_nodes.resize(nodesPerElement);
 
     // pointers
@@ -202,7 +204,7 @@ AssembleScalarEdgeOpenSolverAlgorithm::execute()
         }
       }
 
-      apply_coeff(connected_nodes, rhs, lhs, __FILE__);
+      apply_coeff(connected_nodes, scratchIds, scratchVals, rhs, lhs, __FILE__);
     }
   }
 }

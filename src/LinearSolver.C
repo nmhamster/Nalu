@@ -33,7 +33,6 @@
 
 #include <Ifpack2_Factory.hpp>
 #include <Kokkos_DefaultNode.hpp>
-
 #include <Kokkos_Serial.hpp>
 #include <Teuchos_ArrayRCP.hpp>
 #include <Teuchos_DefaultMpiComm.hpp>
@@ -48,6 +47,9 @@
 #include <Teuchos_ParameterXMLFileReader.hpp>
 #include <MueLu_CreateTpetraPreconditioner.hpp>
 #include <MueLu_CreateEpetraPreconditioner.hpp>
+
+// stk_util
+#include <stk_util/environment/CPUTime.hpp>
 
 #include <iostream>
 
@@ -140,6 +142,7 @@ EpetraLinearSolver::solve(
   ThrowRequire(solver_->GetRHS());
   solver_->SetLHS(sln);
 
+  double time = -stk::cpu_time();
   if (activateML_)
   {
     if (mlPreconditioner_ == 0)
@@ -164,6 +167,8 @@ EpetraLinearSolver::solve(
 
     solver_->SetPrecOperator(mueLuPreconditioner_.getRawPtr());
   }
+  time += stk::cpu_time();
+  timerPrecond_ += time;
   const int max_iterations = solver_->GetAztecOption(AZ_max_iter);
   const double tol = solver_->GetAllAztecParams()[AZ_tol];
 
@@ -319,6 +324,7 @@ TpetraLinearSolver::solve(
   int whichNorm = 2;
   finalResidNrm=0.0;
 
+  double time = -stk::cpu_time();
   if (activateMueLu_)
   {
     setMueLu();
@@ -327,6 +333,8 @@ TpetraLinearSolver::solve(
   {
     preconditioner_->compute();
   }
+  time += stk::cpu_time();
+  timerPrecond_ += time;
 
   problem_->setProblem();
   solver_->solve();
